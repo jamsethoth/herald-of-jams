@@ -1,11 +1,11 @@
-# Jamsbot Counting Game Design
+# Herald of Jams Counting Game Design
 
 **Date:** 2026-09-20
 **Status:** Approved design awaiting implementation planning
 
 ## Purpose
 
-Jamsbot will facilitate and moderate a hidden-pattern cooperative counting game in one Discord text channel. Players submit whole numbers in an ascending sequence without skipping or repeating an expected value and without the same player making two accepted submissions in succession. A broken attempt restarts from the configured starting number. Successful participation, hidden bonuses, and bounded penalties contribute to a persistent seasonal leaderboard.
+Herald of Jams will facilitate and moderate a hidden-pattern cooperative counting game in one Discord text channel. Players submit whole numbers in an ascending sequence without skipping or repeating an expected value and without the same player making two accepted submissions in succession. A broken attempt restarts from the configured starting number. Successful participation, hidden bonuses, and bounded penalties contribute to a persistent seasonal leaderboard.
 
 The first release is for one Discord server, one configured game channel, and one active round at a time. Administration happens through a password-protected web interface available on the private network. Players interact through ordinary Discord messages and a public leaderboard slash command.
 
