@@ -44,6 +44,10 @@ const templateSchema = z.object({
       }
     }),
   ]).default([]),
+  bonusAnnouncement: z.string().optional(),
+  resetAnnouncement: z.string().optional(),
+  completionAnnouncement: z.string().optional(),
+  cancellationAnnouncement: z.string().optional(),
 });
 
 function values(body: Record<string, unknown>, key: string): unknown[] {
@@ -92,6 +96,20 @@ function parseTemplate(body: unknown): RoundTemplateInput {
       : {}),
   };
   const parsed = templateSchema.parse(normalized);
+  const announcements = {
+    ...(parsed.bonusAnnouncement === undefined || parsed.bonusAnnouncement.length === 0
+      ? {}
+      : { bonus: parsed.bonusAnnouncement }),
+    ...(parsed.resetAnnouncement === undefined || parsed.resetAnnouncement.length === 0
+      ? {}
+      : { reset: parsed.resetAnnouncement }),
+    ...(parsed.completionAnnouncement === undefined || parsed.completionAnnouncement.length === 0
+      ? {}
+      : { completion: parsed.completionAnnouncement }),
+    ...(parsed.cancellationAnnouncement === undefined || parsed.cancellationAnnouncement.length === 0
+      ? {}
+      : { cancellation: parsed.cancellationAnnouncement }),
+  };
   return {
     name: parsed.name,
     ...(parsed.notes === undefined || parsed.notes.length === 0 ? {} : { notes: parsed.notes }),
@@ -101,6 +119,7 @@ function parseTemplate(body: unknown): RoundTemplateInput {
     step: parsed.step,
     skipRules: parsed.skipRules,
     bonusRules: parsed.bonusRules,
+    ...(Object.keys(announcements).length === 0 ? {} : { announcements }),
   };
 }
 
@@ -155,7 +174,10 @@ export function registerTemplateRoutes(
     { preHandler: [requireAuthenticated, csrfHook] },
     async (request, reply) => {
       try {
-        const compiled = compileRound(parseTemplate(request.body));
+        const compiled = compileRound(
+          parseTemplate(request.body),
+          repository.getAnnouncementDefaults(),
+        );
         const bonusMatches = compiled.entries.reduce(
           (total, entry) => total + entry.bonusRuleIds.length,
           0,
@@ -166,6 +188,7 @@ export function registerTemplateRoutes(
           required: compiled.entries.length,
           bonusMatches,
           thresholds: "25% / 50% / 75%",
+          announcements: compiled.announcements,
         });
       } catch (error) {
         return reply.code(400).type("text/plain").send(errorText(error));

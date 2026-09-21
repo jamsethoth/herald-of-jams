@@ -22,6 +22,7 @@ import { GameRepository } from "../db/game-repository.js";
 import type { OutboxRepository } from "../db/outbox-repository.js";
 import type { PermissionReport } from "../discord/permissions.js";
 import { SqliteSessionStore, verifyPassword } from "./auth.js";
+import { registerAnnouncementRoutes } from "./routes/announcements.js";
 import { registerDashboardRoute } from "./routes/dashboard.js";
 import { registerLeaderboardRoutes } from "./routes/leaderboard.js";
 import { registerModerationRoutes } from "./routes/moderation.js";
@@ -221,6 +222,12 @@ export function buildAdminServer(dependencies: AdminServerDependencies) {
       requireAuthenticated,
     );
     registerTemplateRoutes(
+      app,
+      dependencies.adminRepository,
+      requireAuthenticated,
+      csrfHook,
+    );
+    registerAnnouncementRoutes(
       app,
       dependencies.adminRepository,
       requireAuthenticated,

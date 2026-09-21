@@ -10,6 +10,7 @@
     <nav aria-label="Administration">
       <a href="/admin">Dashboard</a>
       <a href="/admin/templates">Templates</a>
+      <a href="/admin/settings/announcements">Announcement defaults</a>
       <a href="/admin/moderation">Moderation</a>
       <a href="/admin/leaderboard">Leaderboard</a>
       <a href="/admin/operations">Operations</a>

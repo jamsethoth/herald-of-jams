@@ -41,6 +41,26 @@
         </div>
       <% }) %>
     </fieldset>
+    <fieldset>
+      <legend>Announcement overrides</legend>
+      <p>Leave blank to inherit the current global default when the round is activated.</p>
+      <label>Bonus announcement (optional)
+        <textarea name="bonusAnnouncement" maxlength="1900"><%= it.template.announcements && it.template.announcements.bonus || "" %></textarea>
+      </label>
+      <p>Allowed placeholders: {player}, {bonusPoints}</p>
+      <label>Reset announcement (optional)
+        <textarea name="resetAnnouncement" maxlength="1900"><%= it.template.announcements && it.template.announcements.reset || "" %></textarea>
+      </label>
+      <p>Allowed placeholder: {start}</p>
+      <label>Completion announcement (optional)
+        <textarea name="completionAnnouncement" maxlength="1900"><%= it.template.announcements && it.template.announcements.completion || "" %></textarea>
+      </label>
+      <p>No placeholders.</p>
+      <label>Cancellation announcement (optional)
+        <textarea name="cancellationAnnouncement" maxlength="1900"><%= it.template.announcements && it.template.announcements.cancellation || "" %></textarea>
+      </label>
+      <p>No placeholders.</p>
+    </fieldset>
     <button type="submit">Save</button>
     <button type="submit" formaction="/admin/templates/preview">Preview</button>
   </form>

@@ -5,6 +5,7 @@ import { GameService } from "../src/application/game-service.js";
 import { SerialExecutor } from "../src/application/serial-executor.js";
 import { hashPassword } from "../src/web/auth.js";
 import { buildAdminServer } from "../src/web/server.js";
+import { DEFAULT_ANNOUNCEMENTS } from "../src/domain/announcement-templates.js";
 import { createTestDatabase, message, roundTemplate, type TestDatabaseContext } from "./fixtures.js";
 
 function token(body: string): string {
@@ -75,6 +76,148 @@ describe("round administration routes", () => {
     const page = await app.inject({ method: "GET", url: "/admin", headers: { cookie } });
     return token(page.body);
   }
+
+  it("edits validated global announcement defaults behind authentication and CSRF", async () => {
+    const app = server();
+    const cookie = await login(app);
+    const page = await app.inject({
+      method: "GET",
+      url: "/admin/settings/announcements",
+      headers: { cookie },
+    });
+    expect(page.statusCode).toBe(200);
+    expect(page.body).toContain(DEFAULT_ANNOUNCEMENTS.completion);
+    expect(page.body).toContain("{player}");
+
+    const saved = await app.inject({
+      method: "POST",
+      url: "/admin/settings/announcements",
+      headers: { cookie },
+      payload: {
+        _csrf: token(page.body),
+        bonus: "Bonus {player}: {bonusPoints}",
+        reset: "Reset to {start}",
+        completion: "Complete",
+        cancellation: "Cancelled without penalties",
+      },
+    });
+    expect(saved.statusCode).toBe(302);
+    expect(context.adminRepository.getAnnouncementDefaults().completion).toBe("Complete");
+
+    const noCsrf = await app.inject({
+      method: "POST",
+      url: "/admin/settings/announcements",
+      headers: { cookie },
+      payload: context.adminRepository.getAnnouncementDefaults(),
+    });
+    expect(noCsrf.statusCode).toBe(403);
+
+    for (const invalid of [
+      { ...context.adminRepository.getAnnouncementDefaults(), bonus: "Bad {start}" },
+      { ...context.adminRepository.getAnnouncementDefaults(), completion: "" },
+      { ...context.adminRepository.getAnnouncementDefaults(), completion: "x".repeat(1_901) },
+    ]) {
+      const invalidPage = await app.inject({
+        method: "GET",
+        url: "/admin/settings/announcements",
+        headers: { cookie },
+      });
+      const response = await app.inject({
+        method: "POST",
+        url: "/admin/settings/announcements",
+        headers: { cookie },
+        payload: { ...invalid, _csrf: token(invalidPage.body) },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(context.adminRepository.getAnnouncementDefaults().completion).toBe("Complete");
+    }
+
+    const editPage = await app.inject({
+      method: "GET",
+      url: "/admin/settings/announcements",
+      headers: { cookie },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/admin/settings/announcements",
+      headers: { cookie },
+      payload: {
+        ...context.adminRepository.getAnnouncementDefaults(),
+        completion: "<script>alert(1)</script>",
+        _csrf: token(editPage.body),
+      },
+    });
+    const escaped = await app.inject({
+      method: "GET",
+      url: "/admin/settings/announcements",
+      headers: { cookie },
+    });
+    expect(escaped.body).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(escaped.body).not.toContain("<script>alert(1)</script>");
+    await app.close();
+  });
+
+  it("stores template overrides and previews resolved announcement inheritance", async () => {
+    const app = server();
+    const cookie = await login(app);
+    const csrf = await authToken(app, cookie);
+    const payload = {
+      ...roundTemplate({ start: 1, target: 1 }),
+      completionAnnouncement: "Template complete",
+      _csrf: csrf,
+    };
+
+    const preview = await app.inject({
+      method: "POST",
+      url: "/admin/templates/preview",
+      headers: { cookie },
+      payload,
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.body).toContain("Template complete");
+    expect(preview.body).toContain(DEFAULT_ANNOUNCEMENTS.reset);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/admin/templates",
+      headers: { cookie },
+      payload,
+    });
+    expect(created.statusCode).toBe(302);
+    const templateId = context.adminRepository.listTemplates()[0]!.id;
+    expect(context.adminRepository.getTemplate(templateId).announcements).toEqual({
+      completion: "Template complete",
+    });
+    await service.activateRound(templateId);
+    context.adminRepository.updateAnnouncementDefaults(
+      { ...DEFAULT_ANNOUNCEMENTS, completion: "Changed global completion" },
+      "admin",
+    );
+    const compiled = JSON.parse(
+      (
+        context.database.prepare("SELECT compiled_config_json FROM rounds").get() as {
+          compiled_config_json: string;
+        }
+      ).compiled_config_json,
+    ) as { announcements: { completion: string } };
+    expect(compiled.announcements.completion).toBe("Template complete");
+
+    const bad = await app.inject({
+      method: "POST",
+      url: `/admin/templates/${templateId}`,
+      headers: { cookie },
+      payload: {
+        ...roundTemplate({ start: 1, target: 1 }),
+        bonusAnnouncement: "Bad {start}",
+        _csrf: csrf,
+      },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(context.adminRepository.getTemplate(templateId).announcements).toEqual({
+      completion: "Template complete",
+    });
+    await app.close();
+  });
 
   it("validates previews without persistence and creates, edits, lists, and escapes templates", async () => {
     const app = server();
@@ -191,7 +334,7 @@ describe("round administration routes", () => {
     await app.close();
   });
 
-  it("serializes pause, resume, and confirmed cancellation while preserving penalties", async () => {
+  it("serializes pause, resume, and confirmed cancellation while removing penalties", async () => {
     const app = server();
     const cookie = await login(app);
     const csrf = await authToken(app, cookie);
@@ -231,9 +374,7 @@ describe("round administration routes", () => {
       payload: { _csrf: csrf, confirmation: "CANCEL" },
     });
     expect(context.database.prepare("SELECT state FROM rounds").get()).toEqual({ state: "cancelled" });
-    expect(context.repository.leaderboard()).toEqual([
-      { playerId: "alice", displayName: "alice", total: -2 },
-    ]);
+    expect(context.repository.leaderboard()).toEqual([]);
 
     const next = context.adminRepository.createTemplate(roundTemplate({ name: "Next" }));
     const unsettled = await app.inject({
