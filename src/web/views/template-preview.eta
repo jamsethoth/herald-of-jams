@@ -1,0 +1,7 @@
+<main>
+  <h1>Template preview</h1>
+  <p>Sequence: <%= it.sequence %></p>
+  <p>Required submissions: <%= it.required %></p>
+  <p>Bonus matches: <%= it.bonusMatches %></p>
+  <p>Penalty thresholds: <%= it.thresholds %></p>
+</main>

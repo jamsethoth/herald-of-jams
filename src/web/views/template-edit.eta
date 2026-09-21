@@ -1,0 +1,46 @@
+<main>
+  <h1>Edit template</h1>
+  <form method="post" action="<%= it.action %>">
+    <input type="hidden" name="_csrf" value="<%= it.csrf %>">
+    <label>Name <input name="name" value="<%= it.template.name %>"></label>
+    <label>Notes <textarea name="notes"><%= it.template.notes || "" %></textarea></label>
+    <label>Channel <input name="channelId" value="<%= it.template.channelId %>"></label>
+    <label>Start <input name="start" value="<%= it.template.start %>"></label>
+    <label>Target <input name="target" value="<%= it.template.target %>"></label>
+    <label>Step <input name="step" value="<%= it.template.step %>"></label>
+    <fieldset>
+      <legend>Skip rules</legend>
+      <% it.template.skipRules.concat([{ kind: "" }]).forEach(function(rule) { %>
+        <div class="rule-row">
+          <label>Type <select name="skipKind">
+            <% ["", "prime", "divisible_by", "one_of", "range"].forEach(function(kind) { %>
+              <option value="<%= kind %>" <% if (rule.kind === kind) { %>selected<% } %>><%= kind %></option>
+            <% }) %>
+          </select></label>
+          <label>Divisor <input name="skipDivisor" value="<%= rule.divisor || "" %>"></label>
+          <label>Values <input name="skipValues" value="<%= rule.values ? rule.values.join(",") : "" %>"></label>
+          <label>Minimum <input name="skipMinimum" value="<%= rule.minimum ?? "" %>"></label>
+          <label>Maximum <input name="skipMaximum" value="<%= rule.maximum ?? "" %>"></label>
+        </div>
+      <% }) %>
+    </fieldset>
+    <fieldset>
+      <legend>Bonus rules</legend>
+      <% it.template.bonusRules.concat([{ id: "", predicate: { kind: "" } }]).forEach(function(bonus) { const rule = bonus.predicate; %>
+        <div class="rule-row">
+          <label>ID <input name="bonusId" value="<%= bonus.id %>"></label>
+          <label>Type <select name="bonusKind">
+            <% ["", "prime", "divisible_by", "one_of", "range"].forEach(function(kind) { %>
+              <option value="<%= kind %>" <% if (rule.kind === kind) { %>selected<% } %>><%= kind %></option>
+            <% }) %>
+          </select></label>
+          <label>Divisor <input name="bonusDivisor" value="<%= rule.divisor || "" %>"></label>
+          <label>Values <input name="bonusValues" value="<%= rule.values ? rule.values.join(",") : "" %>"></label>
+          <label>Minimum <input name="bonusMinimum" value="<%= rule.minimum ?? "" %>"></label>
+          <label>Maximum <input name="bonusMaximum" value="<%= rule.maximum ?? "" %>"></label>
+        </div>
+      <% }) %>
+    </fieldset>
+    <button>Save</button>
+  </form>
+</main>

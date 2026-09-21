@@ -14,6 +14,13 @@ interface TemplateRow {
   rules_json: string;
 }
 
+export interface TemplateSummary {
+  id: string;
+  name: string;
+  channelId: string;
+  updatedAt: string;
+}
+
 export class AdminRepository {
   constructor(
     private readonly database: Database.Database,
@@ -75,5 +82,39 @@ export class AdminRepository {
       skipRules: rules.skipRules,
       bonusRules: rules.bonusRules,
     };
+  }
+
+  listTemplates(): readonly TemplateSummary[] {
+    return this.database
+      .prepare(
+        `SELECT id, private_name AS name, channel_id AS channelId, updated_at AS updatedAt
+         FROM round_templates ORDER BY private_name COLLATE NOCASE, id`,
+      )
+      .all() as TemplateSummary[];
+  }
+
+  updateTemplate(id: string, input: RoundTemplateInput): void {
+    compileRound(input);
+    const result = this.database
+      .prepare(
+        `UPDATE round_templates SET
+           private_name = ?, notes = ?, channel_id = ?, start_value = ?, target_value = ?,
+           step_value = ?, rules_json = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        input.name,
+        input.notes ?? null,
+        input.channelId,
+        input.start,
+        input.target,
+        input.step,
+        JSON.stringify({ skipRules: input.skipRules, bonusRules: input.bonusRules }),
+        this.clock.now().toISOString(),
+        id,
+      );
+    if (result.changes !== 1) {
+      throw new Error(`round template not found: ${id}`);
+    }
   }
 }

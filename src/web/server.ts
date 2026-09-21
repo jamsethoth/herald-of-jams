@@ -14,8 +14,15 @@ import { Eta } from "eta";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 
 import type { Clock } from "../application/contracts.js";
+import type { GameService } from "../application/game-service.js";
+import type { SerialExecutor } from "../application/serial-executor.js";
 import type { AppConfig } from "../config.js";
+import type { AdminRepository } from "../db/admin-repository.js";
+import type { PermissionReport } from "../discord/permissions.js";
 import { SqliteSessionStore, verifyPassword } from "./auth.js";
+import { registerDashboardRoute } from "./routes/dashboard.js";
+import { registerRoundRoutes } from "./routes/rounds.js";
+import { registerTemplateRoutes } from "./routes/templates.js";
 
 const SESSION_LIFETIME_MS = 12 * 60 * 60 * 1_000;
 const LOGIN_WINDOW_MS = 15 * 60 * 1_000;
@@ -25,6 +32,11 @@ interface AdminServerDependencies {
   config: AppConfig;
   database: Database.Database;
   clock: Clock;
+  adminRepository?: AdminRepository;
+  gameService?: GameService;
+  executor?: SerialExecutor;
+  permissionReport?: () => PermissionReport;
+  discordConnected?: () => boolean;
 }
 
 interface LoginAttemptRow {
@@ -43,7 +55,8 @@ function isLoopback(address: string): boolean {
   );
 }
 
-export function buildAdminServer({ config, database, clock }: AdminServerDependencies) {
+export function buildAdminServer(dependencies: AdminServerDependencies) {
+  const { config, database, clock } = dependencies;
   const app = Fastify({
     logger: false,
     trustProxy: (address) => config.admin.trustProxy && isLoopback(address),
@@ -180,11 +193,46 @@ export function buildAdminServer({ config, database, clock }: AdminServerDepende
     },
   );
 
-  app.get("/admin", { preHandler: requireAuthenticated }, async (_request, reply) => {
-    return reply.type("text/html").send(
-      `<main><h1>Herald of Jams</h1><form method="post" action="/admin/logout"><input type="hidden" name="_csrf" value="${reply.generateCsrf()}"><button>Log out</button></form></main>`,
+  if (
+    dependencies.adminRepository !== undefined &&
+    dependencies.gameService !== undefined &&
+    dependencies.executor !== undefined &&
+    dependencies.permissionReport !== undefined &&
+    dependencies.discordConnected !== undefined
+  ) {
+    registerDashboardRoute(
+      app,
+      {
+        database,
+        permissionReport: dependencies.permissionReport,
+        discordConnected: dependencies.discordConnected,
+      },
+      requireAuthenticated,
     );
-  });
+    registerTemplateRoutes(
+      app,
+      dependencies.adminRepository,
+      requireAuthenticated,
+      csrfHook,
+    );
+    registerRoundRoutes(
+      app,
+      {
+        gameService: dependencies.gameService,
+        executor: dependencies.executor,
+        adminRepository: dependencies.adminRepository,
+        permissionReport: dependencies.permissionReport,
+      },
+      requireAuthenticated,
+      csrfHook,
+    );
+  } else {
+    app.get("/admin", { preHandler: requireAuthenticated }, async (_request, reply) => {
+      return reply.type("text/html").send(
+        `<main><h1>Herald of Jams</h1><form method="post" action="/admin/logout"><input type="hidden" name="_csrf" value="${reply.generateCsrf()}"><button>Log out</button></form></main>`,
+      );
+    });
+  }
 
   app.post(
     "/admin/logout",

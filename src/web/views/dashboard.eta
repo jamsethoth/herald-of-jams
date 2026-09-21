@@ -1,0 +1,15 @@
+<main>
+  <h1>Herald of Jams administration</h1>
+  <p>Discord <%= it.connected ? "connected" : "disconnected" %></p>
+  <p>Permissions: <%= it.permissions.ok ? "ready" : it.permissions.missing.join(", ") %></p>
+  <% if (it.round) { %>
+    <p>Round state: <%= it.round.state %></p>
+    <p>Expected position: <%= it.expectedPosition %></p>
+  <% } else { %><p>No active round</p><% } %>
+  <p>Unresolved Discord operations: <%= it.unresolved %></p>
+  <p>Critical failures: <%= it.critical %></p>
+  <form method="post" action="/admin/logout">
+    <input type="hidden" name="_csrf" value="<%= it.csrf %>">
+    <button>Log out</button>
+  </form>
+</main>
