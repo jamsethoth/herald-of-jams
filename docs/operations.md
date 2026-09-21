@@ -93,14 +93,15 @@ Cancellation removes both provisional rewards and every penalty owned by the can
 
 ## Announcement configuration and one-value test
 
-Open **Announcement defaults** in the private administration interface to edit the four global messages. Template edit pages provide optional overrides. Blank overrides inherit the current global value at activation, and the resolved messages are stored in the active round snapshot.
+Open **Announcement defaults** in the private administration interface to edit the five global messages. Template edit pages provide optional overrides. Blank overrides inherit the current global value at activation, and the resolved messages are stored in the active round snapshot. Activation atomically queues the resolved round-start announcement before player-generated output.
 
+- Round start: optional `{start}`
 - Bonus: `{player}` and `{bonusPoints}`
-- Reset: `{start}`
+- Reset: optional `{start}`
 - Completion and cancellation: no placeholders
 
 To test completion with one Discord account, create a template whose start and target are the same safe integer, activate it, and submit that number once. The single accepted submission completes the round. This is intended for smoke testing; multi-value rounds still enforce that consecutive accepted submissions come from different players.
 
 ## Manual verification status
 
-Manual testing has verified broken-count handling and offline reconciliation in the user's Discord server. The one-value completion path, announcement overrides, cancellation penalty removal, permissions, Message Content intent, slash registration, pause/resume, bans, ambiguous outbox review, leaderboard publication, and private-network administration still require manual verification before production use. Record only results here—never identifiers, tokens, route secrets, or private URLs.
+Manual testing has verified broken-count handling and offline reconciliation in the user's Discord server. The round-start announcement, one-value completion path, announcement overrides, cancellation penalty removal, permissions, Message Content intent, slash registration, pause/resume, bans, ambiguous outbox review, leaderboard publication, and private-network administration still require manual verification before production use. Record only results here—never identifiers, tokens, route secrets, or private URLs.

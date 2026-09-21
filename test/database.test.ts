@@ -80,6 +80,7 @@ describe("database migrations", () => {
     expect(database.prepare("SELECT version FROM schema_migrations").all()).toEqual([
       { version: 1 },
       { version: 2 },
+      { version: 3 },
     ]);
 
     database.close();
@@ -228,14 +229,42 @@ describe("database migrations", () => {
          VALUES ('cancelled', 'player', -2)`,
       )
       .run();
+    database
+      .prepare(
+        `INSERT INTO discord_outbox
+          (id, channel_id, sequence_number, operation_type, payload_json, nonce, status, created_at)
+         VALUES ('existing-1', 'existing-channel', 1, 'canonical_message', '{}', 'nonce-1', 'pending', 'now')`,
+      )
+      .run();
+    database
+      .prepare(
+        `INSERT INTO discord_outbox
+          (id, channel_id, sequence_number, predecessor_id, operation_type, payload_json, nonce,
+           status, created_at)
+         VALUES ('existing-2', 'existing-channel', 2, 'existing-1', 'delete_original', '{}',
+                 'nonce-2', 'pending', 'now')`,
+      )
+      .run();
 
     migrate(database);
 
     expect(database.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
       { version: 1 },
       { version: 2 },
+      { version: 3 },
     ]);
     expect(database.pragma("foreign_key_check")).toEqual([]);
+    expect(
+      database
+        .prepare(
+          `SELECT id, predecessor_id, operation_type FROM discord_outbox
+           WHERE channel_id = 'existing-channel' ORDER BY sequence_number`,
+        )
+        .all(),
+    ).toEqual([
+      { id: "existing-1", predecessor_id: null, operation_type: "canonical_message" },
+      { id: "existing-2", predecessor_id: "existing-1", operation_type: "delete_original" },
+    ]);
     expect(
       database.prepare("SELECT COUNT(*) AS count FROM score_ledger WHERE round_id = 'cancelled'").get(),
     ).toEqual({ count: 0 });
@@ -261,12 +290,13 @@ describe("database migrations", () => {
     expect(
       database
         .prepare(
-          `SELECT bonus_announcement, reset_announcement, completion_announcement,
+          `SELECT start_announcement, bonus_announcement, reset_announcement, completion_announcement,
                   cancellation_announcement
            FROM announcement_settings WHERE id = 1`,
         )
         .get(),
     ).toEqual({
+      start_announcement: DEFAULT_ANNOUNCEMENTS.start,
       bonus_announcement: DEFAULT_ANNOUNCEMENTS.bonus,
       reset_announcement: DEFAULT_ANNOUNCEMENTS.reset,
       completion_announcement: DEFAULT_ANNOUNCEMENTS.completion,
@@ -275,17 +305,27 @@ describe("database migrations", () => {
     expect(
       database
         .prepare(
-          `SELECT bonus_announcement_override, reset_announcement_override,
+          `SELECT start_announcement_override, bonus_announcement_override, reset_announcement_override,
                   completion_announcement_override, cancellation_announcement_override
            FROM round_templates WHERE id = 'template'`,
         )
         .get(),
     ).toEqual({
+      start_announcement_override: null,
       bonus_announcement_override: null,
       reset_announcement_override: null,
       completion_announcement_override: null,
       cancellation_announcement_override: null,
     });
+    expect(() =>
+      database
+        .prepare(
+          `INSERT INTO discord_outbox
+            (id, channel_id, sequence_number, operation_type, payload_json, nonce, status, created_at)
+           VALUES ('start-op', 'channel', 1, 'start_announcement', '{}', 'start-nonce', 'pending', 'now')`,
+        )
+        .run(),
+    ).not.toThrow();
 
     database.close();
   });

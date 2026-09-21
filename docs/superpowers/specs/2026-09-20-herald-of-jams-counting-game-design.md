@@ -67,7 +67,7 @@ A reusable round template contains:
 - Target number greater than or equal to the starting number
 - Zero or more skip rules
 - Zero or more bonus rules
-- Optional per-template overrides for bonus, reset, completion, and cancellation announcements
+- Optional per-template overrides for round-start, bonus, reset, completion, and cancellation announcements
 
 The first release supports these predicates for skip and bonus rules:
 
@@ -106,8 +106,9 @@ A template whose target equals its starting number compiles to exactly one requi
 
 ## Announcement Configuration
 
-The administration interface provides editable global defaults for four Discord announcements:
+The administration interface provides editable global defaults for five Discord announcements:
 
+- Round started
 - Provisional bonus earned
 - Attempt reset after a break
 - Round completed
@@ -117,14 +118,15 @@ Each reusable round template has an optional override for each announcement. A b
 
 Announcement templates support a small context-specific placeholder allowlist:
 
+- Start: optional `{start}`
 - Bonus: `{player}` and `{bonusPoints}`
-- Reset: `{start}`
+- Reset: optional `{start}`
 - Completion: no dynamic placeholders
 - Cancellation: no dynamic placeholders
 
 Unknown or context-inappropriate placeholders are rejected. Global defaults must be non-empty; per-template overrides may be blank only to request inheritance. Stored templates are length-bounded so every rendered Discord message remains within Discord's 2,000-character limit. Rendering performs literal placeholder substitution only; announcement configuration cannot execute code, access hidden state, or introduce arbitrary expressions.
 
-The built-in initial defaults preserve the existing bonus, reset, and completion intent. The cancellation default states that all provisional rewards and round penalties were discarded. Existing templates inherit global defaults automatically. Existing active compiled rounds that predate announcement snapshots use the built-in defaults as a compatibility fallback.
+The built-in start default announces that a new round has started and renders its starting number. The other initial defaults preserve the existing bonus, reset, and completion intent. The cancellation default states that all provisional rewards and round penalties were discarded. Existing templates inherit global defaults automatically. Existing active compiled rounds that predate announcement snapshots use the built-in defaults as a compatibility fallback.
 
 ## Submission Parsing
 
@@ -189,7 +191,7 @@ Ordinary players cannot edit bot-authored canonical messages. Discord administra
 
 The effective reset announcement is snapshotted at activation. The built-in default says the attempt was reset, states that failed-attempt participation and bonus points were discarded while penalties remain, and reminds players of the original starting number. It never exposes hidden rules or the expected next value.
 
-Persistence uses an outbox-style record for canonical messages, deletions, bonus announcements, reset announcements, completion announcements, cancellation announcements, and leaderboard publication. Duplicate Discord events are ignored by original message ID. Incomplete work is retried after reconnect or restart without applying the submission twice.
+Persistence uses an outbox-style record for round-start announcements, canonical messages, deletions, bonus announcements, reset announcements, completion announcements, cancellation announcements, and leaderboard publication. Activating a round queues its rendered start announcement atomically with the round snapshot; if either write fails, activation rolls back. Duplicate Discord events are ignored by original message ID. Incomplete work is retried after reconnect or restart without applying the submission twice.
 
 Each channel outbox operation has a stable operation ID, a monotonically increasing sequence number, an optional predecessor, a fully snapshotted payload, retry state, and the resulting Discord message ID when applicable. A single dispatcher executes operations in sequence and does not start an operation until its predecessor has succeeded or an administrator has explicitly resolved the predecessor. For one submission, required delivery order is canonical message, original-message deletion, and then any bonus, reset, completion, cancellation, or leaderboard output caused by that decision.
 
@@ -317,7 +319,7 @@ The relational model includes:
 
 State transitions, score-ledger mutations, audit events, and required outbox entries are created in the same SQLite transaction. Foreign keys and uniqueness constraints enforce ownership and Discord-event idempotency.
 
-The schema migration for this revision rebuilds the round-template target constraint to allow `target = start`, adds typed global announcement defaults and nullable template overrides, and removes penalty ledger and worst-severity rows for rounds that were already cancelled under the earlier rule. The migration runs atomically, performs a foreign-key integrity check, and leaves completed and active round scoring untouched.
+The schema migrations for this revision rebuild the round-template target constraint to allow `target = start`, add typed global announcement defaults and nullable template overrides (including the later round-start message), extend the ordered outbox operation type, and remove penalty ledger and worst-severity rows for rounds that were already cancelled under the earlier rule. Each migration runs atomically, performs a foreign-key integrity check when rebuilding referenced tables, and leaves completed and active round scoring untouched.
 
 ## Discord Permissions and Intents
 
@@ -375,7 +377,7 @@ Missing capabilities block activation and are shown in the administration interf
 - Successful completion, leaderboard publication, season archival, and reset guards
 - Pause and resume with retained penalties; cancellation with removed round penalties, discarded provisional rewards, and round-ban expiry
 - Migration of existing cancelled-round penalties and existing template inheritance
-- Global announcement editing, per-template overrides, preview, CSRF protection, and immutable active-round wording
+- Global announcement editing, per-template overrides, preview, CSRF protection, immutable active-round wording, and atomic round-start output
 - Blocking round activation and season reset while terminal Discord work remains unsettled
 - Authentication, session expiration, CSRF protection, throttling, and authorization
 

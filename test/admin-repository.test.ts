@@ -20,10 +20,16 @@ describe("AdminRepository announcement settings", () => {
 
   it("round-trips only the configured template overrides", () => {
     const id = context.adminRepository.createTemplate(
-      roundTemplate({ announcements: { completion: "Template complete" } }),
+      roundTemplate({
+        announcements: {
+          start: "Begin with {start}",
+          completion: "Template complete",
+        },
+      }),
     );
 
     expect(context.adminRepository.getTemplate(id).announcements).toEqual({
+      start: "Begin with {start}",
       completion: "Template complete",
     });
     expect(context.adminRepository.getAnnouncementDefaults()).toEqual(DEFAULT_ANNOUNCEMENTS);

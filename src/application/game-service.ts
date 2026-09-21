@@ -37,6 +37,7 @@ interface AttemptRow {
 }
 
 type OutboxOperation =
+  | "start_announcement"
   | "canonical_message"
   | "delete_original"
   | "bonus_announcement"
@@ -215,6 +216,12 @@ export class GameService {
       for (const entry of compiled.entries) {
         insertEntry.run(roundId, entry.position, entry.value, JSON.stringify(entry.bonusRuleIds));
       }
+      this.enqueue(input.channelId, "start_announcement", {
+        content: renderAnnouncement("start", compiled.announcements.start, {
+          start: compiled.input.start,
+        }),
+        roundId,
+      });
       this.audit("round_activated", roundId, null, { templateId });
       return roundId;
     });

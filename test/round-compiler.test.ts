@@ -87,6 +87,7 @@ describe("compileRound", () => {
 
     expect(compiled.entries.map(({ value }) => value)).toEqual([2]);
     expect(compiled.announcements.completion).toBe("Done");
+    expect(compiled.announcements.start).toBe("A new round has started. Begin at {start}.");
     expect(Object.isFrozen(compiled.announcements)).toBe(true);
   });
 

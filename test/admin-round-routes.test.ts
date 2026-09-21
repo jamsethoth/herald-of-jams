@@ -86,6 +86,7 @@ describe("round administration routes", () => {
       headers: { cookie },
     });
     expect(page.statusCode).toBe(200);
+    expect(page.body).toContain(DEFAULT_ANNOUNCEMENTS.start);
     expect(page.body).toContain(DEFAULT_ANNOUNCEMENTS.completion);
     expect(page.body).toContain("{player}");
 
@@ -95,6 +96,7 @@ describe("round administration routes", () => {
       headers: { cookie },
       payload: {
         _csrf: token(page.body),
+        start: "Open at {start}",
         bonus: "Bonus {player}: {bonusPoints}",
         reset: "Reset to {start}",
         completion: "Complete",
@@ -102,6 +104,7 @@ describe("round administration routes", () => {
       },
     });
     expect(saved.statusCode).toBe(302);
+    expect(context.adminRepository.getAnnouncementDefaults().start).toBe("Open at {start}");
     expect(context.adminRepository.getAnnouncementDefaults().completion).toBe("Complete");
 
     const noCsrf = await app.inject({
@@ -113,6 +116,7 @@ describe("round administration routes", () => {
     expect(noCsrf.statusCode).toBe(403);
 
     for (const invalid of [
+      { ...context.adminRepository.getAnnouncementDefaults(), start: "Bad {player}" },
       { ...context.adminRepository.getAnnouncementDefaults(), bonus: "Bad {start}" },
       { ...context.adminRepository.getAnnouncementDefaults(), completion: "" },
       { ...context.adminRepository.getAnnouncementDefaults(), completion: "x".repeat(1_901) },
@@ -163,6 +167,7 @@ describe("round administration routes", () => {
     const csrf = await authToken(app, cookie);
     const payload = {
       ...roundTemplate({ start: 1, target: 1 }),
+      startAnnouncement: "Template begins at {start}",
       completionAnnouncement: "Template complete",
       _csrf: csrf,
     };
@@ -174,6 +179,7 @@ describe("round administration routes", () => {
       payload,
     });
     expect(preview.statusCode).toBe(200);
+    expect(preview.body).toContain("Template begins at {start}");
     expect(preview.body).toContain("Template complete");
     expect(preview.body).toContain(DEFAULT_ANNOUNCEMENTS.reset);
 
@@ -186,6 +192,7 @@ describe("round administration routes", () => {
     expect(created.statusCode).toBe(302);
     const templateId = context.adminRepository.listTemplates()[0]!.id;
     expect(context.adminRepository.getTemplate(templateId).announcements).toEqual({
+      start: "Template begins at {start}",
       completion: "Template complete",
     });
     await service.activateRound(templateId);
@@ -214,6 +221,7 @@ describe("round administration routes", () => {
     });
     expect(bad.statusCode).toBe(400);
     expect(context.adminRepository.getTemplate(templateId).announcements).toEqual({
+      start: "Template begins at {start}",
       completion: "Template complete",
     });
     await app.close();
@@ -398,7 +406,7 @@ describe("round administration routes", () => {
     const dashboard = await app.inject({ method: "GET", url: "/admin", headers: { cookie } });
     expect(dashboard.body).toContain("Discord connected");
     expect(dashboard.body).toContain("Expected position: 1");
-    expect(dashboard.body).toContain("Unresolved Discord operations: 2");
+    expect(dashboard.body).toContain("Unresolved Discord operations: 3");
     expect(dashboard.body).toContain('name="_csrf"');
     expect(dashboard.body).toContain('/admin/rounds/pause');
     expect(dashboard.body).toContain('/admin/rounds/cancel');

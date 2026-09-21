@@ -3,6 +3,10 @@
   <p>Templates may override these defaults. Changes apply only to rounds activated afterward.</p>
   <form method="post" action="/admin/settings/announcements">
     <input type="hidden" name="_csrf" value="<%= it.csrf %>">
+    <label>Round start announcement
+      <textarea name="start" maxlength="1900" required><%= it.announcements.start %></textarea>
+    </label>
+    <p>Optional placeholder: {start}</p>
     <label>Bonus announcement
       <textarea name="bonus" maxlength="1900" required><%= it.announcements.bonus %></textarea>
     </label>

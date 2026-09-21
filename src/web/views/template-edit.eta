@@ -44,6 +44,10 @@
     <fieldset>
       <legend>Announcement overrides</legend>
       <p>Leave blank to inherit the current global default when the round is activated.</p>
+      <label>Round start announcement (optional)
+        <textarea name="startAnnouncement" maxlength="1900"><%= it.template.announcements && it.template.announcements.start || "" %></textarea>
+      </label>
+      <p>Optional placeholder: {start}</p>
       <label>Bonus announcement (optional)
         <textarea name="bonusAnnouncement" maxlength="1900"><%= it.template.announcements && it.template.announcements.bonus || "" %></textarea>
       </label>

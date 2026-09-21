@@ -146,6 +146,11 @@ describe("moderation, leaderboard, and operation routes", () => {
   it("filters audits and enforces evidence-based operation recovery", async () => {
     const templateId = context.adminRepository.createTemplate(roundTemplate());
     await service.activateRound(templateId);
+    context.database
+      .prepare(
+        "UPDATE discord_outbox SET status = 'delivered' WHERE operation_type = 'start_announcement'",
+      )
+      .run();
     await service.cancelRound("admin");
     const operation = context.database
       .prepare("SELECT id FROM discord_outbox WHERE operation_type = 'cancellation_announcement'")

@@ -17,6 +17,7 @@ interface TemplateRow {
   target_value: number;
   step_value: number;
   rules_json: string;
+  start_announcement_override: string | null;
   bonus_announcement_override: string | null;
   reset_announcement_override: string | null;
   completion_announcement_override: string | null;
@@ -24,13 +25,14 @@ interface TemplateRow {
 }
 
 interface AnnouncementSettingsRow {
+  start_announcement: string;
   bonus_announcement: string;
   reset_announcement: string;
   completion_announcement: string;
   cancellation_announcement: string;
 }
 
-const ANNOUNCEMENT_KINDS = ["bonus", "reset", "completion", "cancellation"] as const;
+const ANNOUNCEMENT_KINDS = ["start", "bonus", "reset", "completion", "cancellation"] as const;
 
 function normalizeOverrides(overrides: AnnouncementOverrides | undefined): AnnouncementOverrides {
   if (overrides === undefined) {
@@ -72,10 +74,10 @@ export class AdminRepository {
           .prepare(
             `INSERT INTO round_templates
               (id, private_name, notes, channel_id, start_value, target_value, step_value,
-               rules_json, bonus_announcement_override, reset_announcement_override,
+               rules_json, start_announcement_override, bonus_announcement_override, reset_announcement_override,
                completion_announcement_override, cancellation_announcement_override,
                created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             id,
@@ -86,6 +88,7 @@ export class AdminRepository {
             input.target,
             input.step,
             JSON.stringify({ skipRules: input.skipRules, bonusRules: input.bonusRules }),
+            announcements.start ?? null,
             announcements.bonus ?? null,
             announcements.reset ?? null,
             announcements.completion ?? null,
@@ -102,6 +105,7 @@ export class AdminRepository {
     const row = this.database
       .prepare(
         `SELECT private_name, notes, channel_id, start_value, target_value, step_value, rules_json,
+                start_announcement_override,
                 bonus_announcement_override, reset_announcement_override,
                 completion_announcement_override, cancellation_announcement_override
          FROM round_templates WHERE id = ?`,
@@ -115,6 +119,9 @@ export class AdminRepository {
       "skipRules" | "bonusRules"
     >;
     const announcements: AnnouncementOverrides = {
+      ...(row.start_announcement_override === null
+        ? {}
+        : { start: row.start_announcement_override }),
       ...(row.bonus_announcement_override === null
         ? {}
         : { bonus: row.bonus_announcement_override }),
@@ -163,7 +170,7 @@ export class AdminRepository {
       .prepare(
         `UPDATE round_templates SET
            private_name = ?, notes = ?, channel_id = ?, start_value = ?, target_value = ?,
-           step_value = ?, rules_json = ?, bonus_announcement_override = ?,
+           step_value = ?, rules_json = ?, start_announcement_override = ?, bonus_announcement_override = ?,
            reset_announcement_override = ?, completion_announcement_override = ?,
            cancellation_announcement_override = ?, updated_at = ?
          WHERE id = ?`,
@@ -176,6 +183,7 @@ export class AdminRepository {
         input.target,
         input.step,
         JSON.stringify({ skipRules: input.skipRules, bonusRules: input.bonusRules }),
+        announcements.start ?? null,
         announcements.bonus ?? null,
         announcements.reset ?? null,
         announcements.completion ?? null,
@@ -191,7 +199,7 @@ export class AdminRepository {
   getAnnouncementDefaults(): AnnouncementTemplates {
     const row = this.database
       .prepare(
-        `SELECT bonus_announcement, reset_announcement, completion_announcement,
+        `SELECT start_announcement, bonus_announcement, reset_announcement, completion_announcement,
                 cancellation_announcement
          FROM announcement_settings WHERE id = 1`,
       )
@@ -200,6 +208,7 @@ export class AdminRepository {
       throw new Error("announcement settings not found");
     }
     return {
+      start: row.start_announcement,
       bonus: row.bonus_announcement,
       reset: row.reset_announcement,
       completion: row.completion_announcement,
@@ -217,11 +226,12 @@ export class AdminRepository {
         this.database
           .prepare(
             `UPDATE announcement_settings SET
-               bonus_announcement = ?, reset_announcement = ?, completion_announcement = ?,
+               start_announcement = ?, bonus_announcement = ?, reset_announcement = ?, completion_announcement = ?,
                cancellation_announcement = ?, updated_at = ?
              WHERE id = 1`,
           )
           .run(
+            validated.start,
             validated.bonus,
             validated.reset,
             validated.completion,

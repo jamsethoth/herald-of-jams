@@ -6,6 +6,7 @@ import type { AnnouncementTemplates } from "../../domain/types.js";
 function parseAnnouncements(body: unknown): AnnouncementTemplates {
   const values = body as Record<string, unknown>;
   return {
+    start: typeof values.start === "string" ? values.start : "",
     bonus: typeof values.bonus === "string" ? values.bonus : "",
     reset: typeof values.reset === "string" ? values.reset : "",
     completion: typeof values.completion === "string" ? values.completion : "",

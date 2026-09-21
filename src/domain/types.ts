@@ -14,9 +14,10 @@ export interface BonusRule {
   predicate: RulePredicate;
 }
 
-export type AnnouncementKind = "bonus" | "reset" | "completion" | "cancellation";
+export type AnnouncementKind = "start" | "bonus" | "reset" | "completion" | "cancellation";
 
 export interface AnnouncementTemplates {
+  start: string;
   bonus: string;
   reset: string;
   completion: string;

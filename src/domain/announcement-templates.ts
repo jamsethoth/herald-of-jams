@@ -8,6 +8,7 @@ export const MAX_ANNOUNCEMENT_TEMPLATE_LENGTH = 1_900;
 export const MAX_DISCORD_MESSAGE_LENGTH = 2_000;
 
 export const DEFAULT_ANNOUNCEMENTS: Readonly<AnnouncementTemplates> = Object.freeze({
+  start: "A new round has started. Begin at {start}.",
   bonus: "{player} earned {bonusPoints} provisional bonus points.",
   reset:
     "The attempt was reset. Provisional rewards were discarded; penalties remain. Start again at {start}.",
@@ -16,8 +17,9 @@ export const DEFAULT_ANNOUNCEMENTS: Readonly<AnnouncementTemplates> = Object.fre
     "The round was cancelled. All provisional rewards and round penalties were discarded.",
 });
 
-const KINDS = ["bonus", "reset", "completion", "cancellation"] as const;
+const KINDS = ["start", "bonus", "reset", "completion", "cancellation"] as const;
 const ALLOWED_PLACEHOLDERS: Readonly<Record<AnnouncementKind, ReadonlySet<string>>> = {
+  start: new Set(["start"]),
   bonus: new Set(["player", "bonusPoints"]),
   reset: new Set(["start"]),
   completion: new Set(),

@@ -73,16 +73,60 @@ describe("GameService", () => {
         )
         .all(),
     ).toEqual([
-      { operation_type: "canonical_message", sequence_number: 1, predecessor_id: null },
+      { operation_type: "start_announcement", sequence_number: 1, predecessor_id: null },
+      {
+        operation_type: "canonical_message",
+        sequence_number: 2,
+        predecessor_id: expect.any(String),
+      },
       {
         operation_type: "delete_original",
-        sequence_number: 2,
+        sequence_number: 3,
         predecessor_id: expect.any(String),
       },
     ]);
     expect(scalar(context, "SELECT COUNT(*) AS value FROM compiled_entries")).toBe(5);
     const nonces = context.database.prepare("SELECT nonce FROM discord_outbox").all() as { nonce: string }[];
     expect(nonces.every(({ nonce }) => nonce.length <= 25)).toBe(true);
+  });
+
+  it("queues the snapshotted start announcement when activation commits", async () => {
+    const templateId = context.adminRepository.createTemplate(
+      roundTemplate({ announcements: { start: "Begin at {start}" } }),
+    );
+
+    await service.activateRound(templateId);
+    context.adminRepository.updateAnnouncementDefaults(
+      { ...DEFAULT_ANNOUNCEMENTS, start: "Changed after activation" },
+      "admin",
+    );
+
+    expect(outboxContents(context, "start_announcement")).toEqual(["Begin at 1"]);
+    const compiled = JSON.parse(
+      (
+        context.database.prepare("SELECT compiled_config_json FROM rounds").get() as {
+          compiled_config_json: string;
+        }
+      ).compiled_config_json,
+    ) as { announcements: { start: string } };
+    expect(compiled.announcements.start).toBe("Begin at {start}");
+  });
+
+  it("rolls back activation when the start announcement cannot be queued", async () => {
+    const templateId = context.adminRepository.createTemplate(roundTemplate());
+    context.database.exec(`
+      CREATE TRIGGER fail_start_outbox BEFORE INSERT ON discord_outbox
+      WHEN NEW.operation_type = 'start_announcement'
+      BEGIN SELECT RAISE(ABORT, 'forced start outbox failure'); END;
+    `);
+
+    await expect(service.activateRound(templateId)).rejects.toThrow(/forced start outbox failure/);
+
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM rounds")).toBe(0);
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM compiled_entries")).toBe(0);
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM seasons")).toBe(0);
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM discord_outbox")).toBe(0);
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM audit_events")).toBe(0);
   });
 
   it("splits a maximum-length canonical submission into valid Discord messages", async () => {
@@ -120,7 +164,7 @@ describe("GameService", () => {
     await productionService.processMessage(message("100", "alice", "1"));
 
     const nonces = context.database.prepare("SELECT nonce FROM discord_outbox").all() as { nonce: string }[];
-    expect(nonces).toHaveLength(2);
+    expect(nonces).toHaveLength(3);
     expect(nonces.every(({ nonce }) => nonce.length === 25)).toBe(true);
   });
 
@@ -139,7 +183,7 @@ describe("GameService", () => {
     expect(scalar(context, "SELECT COUNT(*) AS value FROM attempts")).toBe(0);
     expect(scalar(context, "SELECT COUNT(*) AS value FROM submissions")).toBe(0);
     expect(scalar(context, "SELECT COUNT(*) AS value FROM attempt_contributions")).toBe(0);
-    expect(scalar(context, "SELECT COUNT(*) AS value FROM discord_outbox")).toBe(0);
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM discord_outbox")).toBe(1);
     expect(
       scalar(
         context,

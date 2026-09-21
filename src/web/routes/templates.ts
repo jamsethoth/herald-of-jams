@@ -44,6 +44,7 @@ const templateSchema = z.object({
       }
     }),
   ]).default([]),
+  startAnnouncement: z.string().optional(),
   bonusAnnouncement: z.string().optional(),
   resetAnnouncement: z.string().optional(),
   completionAnnouncement: z.string().optional(),
@@ -97,6 +98,9 @@ function parseTemplate(body: unknown): RoundTemplateInput {
   };
   const parsed = templateSchema.parse(normalized);
   const announcements = {
+    ...(parsed.startAnnouncement === undefined || parsed.startAnnouncement.length === 0
+      ? {}
+      : { start: parsed.startAnnouncement }),
     ...(parsed.bonusAnnouncement === undefined || parsed.bonusAnnouncement.length === 0
       ? {}
       : { bonus: parsed.bonusAnnouncement }),
