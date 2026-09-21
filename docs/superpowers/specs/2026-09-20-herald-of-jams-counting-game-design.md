@@ -124,7 +124,7 @@ Announcement templates support a small context-specific placeholder allowlist:
 
 Unknown or context-inappropriate placeholders are rejected. Global defaults must be non-empty; per-template overrides may be blank only to request inheritance. Stored templates are length-bounded so every rendered Discord message remains within Discord's 2,000-character limit. Rendering performs literal placeholder substitution only; announcement configuration cannot execute code, access hidden state, or introduce arbitrary expressions.
 
-The built-in initial defaults preserve the existing bonus, reset, and completion wording. The cancellation default states that all provisional rewards and round penalties were discarded. Existing templates inherit global defaults automatically. Existing active compiled rounds that predate announcement snapshots use the built-in defaults as a compatibility fallback.
+The built-in initial defaults preserve the existing bonus, reset, and completion intent. The cancellation default states that all provisional rewards and round penalties were discarded. Existing templates inherit global defaults automatically. Existing active compiled rounds that predate announcement snapshots use the built-in defaults as a compatibility fallback.
 
 ## Submission Parsing
 
