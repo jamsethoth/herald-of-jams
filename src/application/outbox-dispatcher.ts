@@ -52,11 +52,22 @@ export class OutboxDispatcher {
 
     const needsReconciliation = operation.lastError?.startsWith("ambiguous:") === true;
     if (needsReconciliation && operation.operationType !== "delete_original") {
-      const found = await this.transport.findOwnMessageByNonce(
-        operation.channelId,
-        operation.nonce,
-        operation.createdAt,
-      );
+      let found: { id: string } | null;
+      try {
+        found = await this.transport.findOwnMessageByNonce(
+          operation.channelId,
+          operation.nonce,
+          operation.createdAt,
+        );
+      } catch (error) {
+        const description = error instanceof Error ? error.message : "nonce reconciliation failed";
+        const nextAttemptAt = this.outbox.scheduleAmbiguousReconciliation(
+          operation.id,
+          description,
+          1_000,
+        );
+        return { kind: "retry_scheduled", operationId: operation.id, nextAttemptAt };
+      }
       if (found !== null) {
         this.outbox.recordDelivered(operation.id, found.id);
         return { kind: "delivered", operationId: operation.id };
@@ -80,11 +91,11 @@ export class OutboxDispatcher {
     } catch (error) {
       const description = error instanceof Error ? error.message : "unknown Discord delivery failure";
       if (error instanceof AmbiguousDiscordError) {
-        this.outbox.scheduleAmbiguousReconciliation(operation.id, description);
+        const nextAttemptAt = this.outbox.scheduleAmbiguousReconciliation(operation.id, description);
         return {
           kind: "retry_scheduled",
           operationId: operation.id,
-          nextAttemptAt: this.clock.now().toISOString(),
+          nextAttemptAt,
         };
       }
       const nextAttemptAt = this.outbox.scheduleRetry(

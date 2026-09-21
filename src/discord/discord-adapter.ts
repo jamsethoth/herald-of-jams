@@ -14,6 +14,7 @@ import type { SerialExecutor } from "../application/serial-executor.js";
 import type { DispatchResult } from "../application/outbox-dispatcher.js";
 import type { GameRepository } from "../db/game-repository.js";
 import { REQUIRED_CAPABILITIES, validateActivationPermissions, type PermissionReport } from "./permissions.js";
+import { isEligiblePlayerMessage } from "./discord-transport.js";
 
 export interface GatewayMessage extends InboundDiscordMessage {
   guildId: string | null;
@@ -32,6 +33,8 @@ export interface DiscordGatewayHandlers {
   messageCreate(message: GatewayMessage): void | Promise<void>;
   messageDelete(message: { id: string }): void | Promise<void>;
   interactionCreate(interaction: GatewayInteraction): void | Promise<void>;
+  disconnected(): void | Promise<void>;
+  reconnected(): void | Promise<void>;
 }
 
 export interface DiscordGateway {
@@ -75,13 +78,19 @@ export class DiscordJsGateway implements DiscordGateway {
         },
       });
     };
+    const onDisconnect = () => void handlers.disconnected();
+    const onResume = () => void handlers.reconnected();
     this.client.on(Events.MessageCreate, onMessage);
     this.client.on(Events.MessageDelete, onDelete);
     this.client.on(Events.InteractionCreate, onInteraction);
+    this.client.on(Events.ShardDisconnect, onDisconnect);
+    this.client.on(Events.ShardResume, onResume);
     return () => {
       this.client.off(Events.MessageCreate, onMessage);
       this.client.off(Events.MessageDelete, onDelete);
       this.client.off(Events.InteractionCreate, onInteraction);
+      this.client.off(Events.ShardDisconnect, onDisconnect);
+      this.client.off(Events.ShardResume, onResume);
     };
   }
 
@@ -130,7 +139,11 @@ export class DiscordJsGateway implements DiscordGateway {
 interface AdapterDependencies {
   gateway: DiscordGateway;
   gameService: { processMessage(message: InboundDiscordMessage): Promise<MessageDisposition> };
-  dispatcher: { dispatchNext(channelId: string): Promise<DispatchResult> };
+  dispatcher: {
+    dispatchNext(channelId: string): Promise<DispatchResult>;
+    wake?(channelId: string): void;
+  };
+  reconcile?: (channelId: string) => Promise<void>;
   executor: SerialExecutor;
   repository: GameRepository;
   clock: Clock;
@@ -169,12 +182,29 @@ function leaderboardPages(entries: ReturnType<GameRepository["leaderboard"]>): r
 
 export class DiscordAdapter {
   private unsubscribe: (() => void) | undefined;
+  private accepting = false;
+  private intakeFailure = false;
+  private readonly buffered: GatewayMessage[] = [];
 
   constructor(private readonly dependencies: AdapterDependencies) {}
 
   async start(): Promise<void> {
+    this.prepare();
     await this.connect();
     this.startAcceptingMessages();
+  }
+
+  prepare(): void {
+    if (this.unsubscribe !== undefined) return;
+    this.unsubscribe = this.dependencies.gateway.subscribe({
+      messageCreate: async (message) => this.handleMessage(message),
+      messageDelete: async (message) => this.handleDelete(message.id),
+      interactionCreate: async (interaction) => this.handleInteraction(interaction),
+      disconnected: () => {
+        this.accepting = false;
+      },
+      reconnected: async () => this.handleReconnect(),
+    });
   }
 
   async connect(): Promise<void> {
@@ -186,14 +216,14 @@ export class DiscordAdapter {
   }
 
   startAcceptingMessages(): void {
-    if (this.unsubscribe !== undefined) {
-      return;
-    }
-    this.unsubscribe = this.dependencies.gateway.subscribe({
-      messageCreate: async (message) => this.handleMessage(message),
-      messageDelete: async (message) => this.handleDelete(message.id),
-      interactionCreate: async (interaction) => this.handleInteraction(interaction),
-    });
+    this.prepare();
+    this.intakeFailure = false;
+    this.accepting = true;
+    this.flushBuffered();
+  }
+
+  hasCriticalFailure(): boolean {
+    return this.intakeFailure;
   }
 
   async stop(): Promise<void> {
@@ -203,6 +233,10 @@ export class DiscordAdapter {
   }
 
   private async handleMessage(message: GatewayMessage): Promise<void> {
+    if (!this.accepting) {
+      this.buffered.push(message);
+      return;
+    }
     const activeChannel =
       this.dependencies.config.channelId.length > 0
         ? this.dependencies.config.channelId
@@ -216,28 +250,103 @@ export class DiscordAdapter {
     if (
       message.guildId !== this.dependencies.config.guildId ||
       message.channelId !== activeChannel ||
-      message.authorIsBot ||
-      message.webhookId !== null
+      !isEligiblePlayerMessage(message.authorIsBot, message.webhookId)
     ) {
       return;
     }
     try {
       await this.dependencies.executor.run(message.channelId, async () => {
-        const disposition = await this.dependencies.gameService.processMessage({
-          id: message.id,
-          channelId: message.channelId,
-          authorId: message.authorId,
-          displayName: message.displayName,
-          content: message.content,
-          createdAt: message.createdAt,
-        });
-        if (disposition.kind === "recorded") {
-          await this.dependencies.dispatcher.dispatchNext(message.channelId);
+        if (this.intakeFailure) {
+          this.buffered.push(message);
+          return;
         }
+        let disposition: MessageDisposition;
+        try {
+          disposition = await this.dependencies.gameService.processMessage({
+            id: message.id,
+            channelId: message.channelId,
+            authorId: message.authorId,
+            displayName: message.displayName,
+            content: message.content,
+            createdAt: message.createdAt,
+          });
+        } catch (error) {
+          this.intakeFailure = true;
+          this.accepting = false;
+          throw error;
+        }
+        if (disposition.kind === "recorded") {
+          if (this.dependencies.dispatcher.wake !== undefined) {
+            this.dependencies.dispatcher.wake(message.channelId);
+          } else {
+            await this.dependencies.dispatcher.dispatchNext(message.channelId);
+          }
+        }
+        this.advanceCheckpoint(message.channelId, message.id);
       });
     } catch (error) {
-      this.auditFailure("messageCreate", error);
+      this.intakeFailure = true;
+      this.accepting = false;
+      try {
+        this.auditFailure("messageCreate", error);
+      } catch {
+        // The intake gate remains closed even when the audit write failed.
+      }
     }
+  }
+
+  private activeChannel(): string | undefined {
+    return this.dependencies.config.channelId.length > 0
+      ? this.dependencies.config.channelId
+      : (
+          this.dependencies.repository.database
+            .prepare(
+              "SELECT channel_id FROM rounds WHERE state IN ('waiting_for_start', 'counting', 'paused') LIMIT 1",
+            )
+            .get() as { channel_id: string } | undefined
+        )?.channel_id;
+  }
+
+  private async handleReconnect(): Promise<void> {
+    this.accepting = false;
+    const channelId = this.activeChannel();
+    try {
+      if (channelId !== undefined) await this.dependencies.reconcile?.(channelId);
+      this.intakeFailure = false;
+      this.accepting = true;
+      if (channelId !== undefined) this.dependencies.dispatcher.wake?.(channelId);
+      this.flushBuffered();
+    } catch (error) {
+      this.intakeFailure = true;
+      try {
+        this.auditFailure("reconnect", error);
+      } catch {
+        // Keep intake gated until a later reconnect or restart can reconcile.
+      }
+    }
+  }
+
+  private flushBuffered(): void {
+    const buffered = this.buffered.splice(0);
+    for (const message of buffered) void this.handleMessage(message);
+  }
+
+  private advanceCheckpoint(channelId: string, messageId: string): void {
+    const current = this.dependencies.repository.database
+      .prepare("SELECT last_examined_message_id FROM channel_checkpoints WHERE channel_id = ?")
+      .get(channelId) as { last_examined_message_id: string } | undefined;
+    if (current !== undefined && BigInt(current.last_examined_message_id) >= BigInt(messageId)) return;
+    this.dependencies.repository.immediate(() => {
+      this.dependencies.repository.database
+        .prepare(
+          `INSERT INTO channel_checkpoints (channel_id, last_examined_message_id, updated_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(channel_id) DO UPDATE SET
+             last_examined_message_id = excluded.last_examined_message_id,
+             updated_at = excluded.updated_at`,
+        )
+        .run(channelId, messageId, this.dependencies.clock.now().toISOString());
+    });
   }
 
   private async handleDelete(messageId: string): Promise<void> {

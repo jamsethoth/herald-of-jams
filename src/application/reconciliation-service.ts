@@ -48,7 +48,10 @@ export class ReconciliationService {
               deferResetAnnouncement: true,
             });
             const stored = this.repository.submission(message.id);
-            if (stored?.decision.startsWith("broken_") === true) {
+            if (
+              disposition.kind === "recorded" &&
+              stored?.decision.startsWith("broken_") === true
+            ) {
               breakingMessageId = message.id;
             }
             completed = this.roundCompleted(stored?.roundId);
@@ -71,6 +74,10 @@ export class ReconciliationService {
           break;
         }
         highWater = finalHighWater;
+      }
+
+      if (highWater !== null && (checkpoint === null || greaterThan(highWater, checkpoint))) {
+        this.advanceCheckpoint(channelId, highWater);
       }
 
       if (breakingMessageId !== undefined) {

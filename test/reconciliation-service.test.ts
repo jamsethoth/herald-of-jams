@@ -233,4 +233,25 @@ describe("ReconciliationService", () => {
     expect(result.highWaterMessageId).toBe("102");
     expect(result.completed).toBe(true);
   });
+
+  it("does not reopen invalidation for a duplicate historical break", async () => {
+    await activate();
+    const live = [
+      message("100", "alice", "1"),
+      message("101", "alice", "9"),
+      message("102", "bob", "1"),
+    ];
+    for (const item of live) await gameService.processMessage(item);
+    context.database
+      .prepare(
+        `INSERT INTO channel_checkpoints (channel_id, last_examined_message_id, updated_at)
+         VALUES ('channel-1', '100', 'now')`,
+      )
+      .run();
+    transport.addHistory(...live, message("103", "charlie", "2"));
+
+    await reconciler.reconcile("channel-1");
+
+    expect(context.repository.submission("103")?.decision).toBe("accepted");
+  });
 });

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import type { Clock, IdGenerator } from "./application/contracts.js";
 import { GameService } from "./application/game-service.js";
 import { OutboxDispatcher } from "./application/outbox-dispatcher.js";
+import { OutboxPump } from "./application/outbox-pump.js";
 import { ReconciliationService } from "./application/reconciliation-service.js";
 import { SerialExecutor } from "./application/serial-executor.js";
 import { loadConfig, type AppConfig } from "./config.js";
@@ -88,10 +89,30 @@ export function composeApplication(config: AppConfig): ApplicationRuntime {
   const gateway = new DiscordJsGateway(client);
   const transport = new DiscordJsTransport(client);
   const dispatcher = new OutboxDispatcher(outboxRepository, transport, clock);
+  const reconciler = new ReconciliationService(
+    transport,
+    gameService,
+    gameRepository,
+    executor,
+    clock,
+  );
+  const pump = new OutboxPump(dispatcher, () =>
+    (
+      database
+        .prepare(
+          "SELECT DISTINCT channel_id FROM discord_outbox WHERE status NOT IN ('delivered', 'abandoned', 'needs_review')",
+        )
+        .all() as { channel_id: string }[]
+    ).map(({ channel_id }) => channel_id),
+  );
   const adapter = new DiscordAdapter({
     gateway,
     gameService,
-    dispatcher,
+    dispatcher: {
+      dispatchNext: (channelId) => dispatcher.dispatchNext(channelId),
+      wake: (channelId) => pump.wake(channelId),
+    },
+    reconcile: (channelId) => reconciler.reconcile(channelId).then(() => undefined),
     executor,
     repository: gameRepository,
     clock,
@@ -103,13 +124,6 @@ export function composeApplication(config: AppConfig): ApplicationRuntime {
       channelId: "",
     },
   });
-  const reconciler = new ReconciliationService(
-    transport,
-    gameService,
-    gameRepository,
-    executor,
-    clock,
-  );
   const server = buildAdminServer({
     config,
     database,
@@ -123,6 +137,8 @@ export function composeApplication(config: AppConfig): ApplicationRuntime {
         ? { ok: client.isReady(), missing: client.isReady() ? [] : [...REQUIRED_CAPABILITIES] }
         : gateway.permissionReport(channelId),
     discordConnected: () => client.isReady(),
+    criticalFailure: () => adapter.hasCriticalFailure(),
+    outboxWake: (channelId) => pump.wake(channelId),
   });
 
   return new ApplicationRuntime({
@@ -138,7 +154,10 @@ export function composeApplication(config: AppConfig): ApplicationRuntime {
     startHttp: async () => {
       await server.listen({ host: config.admin.host, port: config.admin.port });
     },
-    connectDiscord: async () => adapter.connect(),
+    connectDiscord: async () => {
+      adapter.prepare();
+      await adapter.connect();
+    },
     reconcile: async (channelId) => {
       await reconciler.reconcile(channelId);
     },
@@ -155,9 +174,15 @@ export function composeApplication(config: AppConfig): ApplicationRuntime {
         }
       }
     },
-    enableLiveIntake: () => adapter.startAcceptingMessages(),
+    enableLiveIntake: () => {
+      pump.start();
+      adapter.startAcceptingMessages();
+    },
     stopHttp: async () => server.close(),
-    stopDiscord: async () => adapter.stop(),
+    stopDiscord: async () => {
+      await pump.stop();
+      await adapter.stop();
+    },
     drainWork: async () => executor.whenIdle(),
     closeDatabase: () => database.close(),
   });

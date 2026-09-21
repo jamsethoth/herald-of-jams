@@ -9,6 +9,7 @@ export function registerOperationRoutes(
   outbox: OutboxRepository,
   requireAuthenticated: preHandlerHookHandler,
   csrfHook: preHandlerHookHandler,
+  outboxWake?: (channelId: string) => void,
 ): void {
   app.get("/admin/operations", { preHandler: requireAuthenticated }, async (_request, reply) => {
     const operations = database
@@ -57,6 +58,8 @@ export function registerOperationRoutes(
   app.post("/admin/operations/:id/retry", hooks, async (request, reply) => {
     try {
       outbox.retry((request.params as { id: string }).id, "admin");
+      const operation = outbox.get((request.params as { id: string }).id);
+      if (operation !== undefined) outboxWake?.(operation.channelId);
       return reply.redirect("/admin/operations");
     } catch (error) {
       return reply.code(409).send(error instanceof Error ? error.message : "Conflict");
@@ -70,6 +73,8 @@ export function registerOperationRoutes(
     }
     try {
       outbox.markDelivered((request.params as { id: string }).id, body.discordMessageId, "admin");
+      const operation = outbox.get((request.params as { id: string }).id);
+      if (operation !== undefined) outboxWake?.(operation.channelId);
       return reply.redirect("/admin/operations");
     } catch (error) {
       return reply.code(409).send(error instanceof Error ? error.message : "Conflict");
@@ -86,6 +91,8 @@ export function registerOperationRoutes(
     }
     try {
       outbox.abandon((request.params as { id: string }).id, body.reason, "admin");
+      const operation = outbox.get((request.params as { id: string }).id);
+      if (operation !== undefined) outboxWake?.(operation.channelId);
       return reply.redirect("/admin/operations");
     } catch (error) {
       return reply.code(409).send(error instanceof Error ? error.message : "Conflict");

@@ -161,13 +161,15 @@ export class OutboxRepository {
     return nextAttemptAt;
   }
 
-  scheduleAmbiguousReconciliation(id: string, error: string): void {
+  scheduleAmbiguousReconciliation(id: string, error: string, delayMs = 0): string {
+    const nextAttemptAt = new Date(this.clock.now().getTime() + delayMs).toISOString();
     this.database
       .prepare(
         `UPDATE discord_outbox
          SET status = 'retry_wait', next_attempt_at = ?, last_error = ? WHERE id = ?`,
       )
-      .run(this.clock.now().toISOString(), `ambiguous: ${error.slice(0, 480)}`, id);
+      .run(nextAttemptAt, `ambiguous: ${error.slice(0, 480)}`, id);
+    return nextAttemptAt;
   }
 
   requireReview(id: string, error: string): void {

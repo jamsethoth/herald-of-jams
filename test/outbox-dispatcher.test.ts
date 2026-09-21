@@ -141,6 +141,23 @@ describe("OutboxDispatcher", () => {
     expect(outbox.status(operation.id)).toBe("needs_review");
   });
 
+  it("returns ambiguous lookup failures to retry_wait instead of stranding delivery", async () => {
+    const operation = insert("one", 1);
+    context.database
+      .prepare("UPDATE discord_outbox SET status = 'retry_wait', last_error = 'ambiguous: lost response'")
+      .run();
+    transport.findOwnMessageByNonce = async () => {
+      throw new Error("history unavailable");
+    };
+
+    await expect(dispatcher.dispatchNext("channel-1")).resolves.toMatchObject({
+      kind: "retry_scheduled",
+      operationId: operation.id,
+    });
+    expect(outbox.status(operation.id)).toBe("retry_wait");
+    expect(outbox.get(operation.id)?.lastError).toContain("ambiguous:");
+  });
+
   it("audits manual delivery and abandonment resolutions", () => {
     const delivered = insert("one", 1);
     const abandoned = insert("two", 2);

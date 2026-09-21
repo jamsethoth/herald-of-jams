@@ -7,6 +7,7 @@ interface DashboardDependencies {
   database: Database.Database;
   permissionReport(channelId?: string): PermissionReport | Promise<PermissionReport>;
   discordConnected(): boolean;
+  criticalFailure?: () => boolean;
 }
 
 export function registerDashboardRoute(
@@ -45,7 +46,7 @@ export function registerDashboardRoute(
       dependencies.database
         .prepare("SELECT COUNT(*) AS count FROM discord_outbox WHERE status = 'needs_review'")
         .get() as { count: number }
-    ).count;
+    ).count + (dependencies.criticalFailure?.() === true ? 1 : 0);
     const permissions = await dependencies.permissionReport(round?.channel_id);
     return reply.view("dashboard.eta", {
       title: "Herald of Jams administration",

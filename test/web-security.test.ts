@@ -84,6 +84,9 @@ describe("admin server security", () => {
     expect(cookieHeader).toMatch(/SameSite=Strict/i);
     expect(cookieHeader).toMatch(/Path=\/admin/i);
     expect(cookieHeader).toMatch(/Expires=/i);
+    const expiries = [...cookieHeader.matchAll(/Expires=([^,]+, [^;]+)/gi)];
+    const authenticatedExpiry = new Date(expiries.at(-1)?.[1] ?? 0).getTime();
+    expect(authenticatedExpiry - Date.now()).toBeGreaterThan(11 * 60 * 60 * 1_000);
     expect(cookieHeader).not.toMatch(/Secure/i);
 
     const dashboard = await app.inject({

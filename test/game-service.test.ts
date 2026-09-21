@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 
 import { GameService } from "../src/application/game-service.js";
 import {
@@ -68,6 +69,47 @@ describe("GameService", () => {
       },
     ]);
     expect(scalar(context, "SELECT COUNT(*) AS value FROM compiled_entries")).toBe(5);
+    const nonces = context.database.prepare("SELECT nonce FROM discord_outbox").all() as { nonce: string }[];
+    expect(nonces.every(({ nonce }) => nonce.length <= 25)).toBe(true);
+  });
+
+  it("splits a maximum-length canonical submission into valid Discord messages", async () => {
+    await activate();
+    await service.processMessage(message("100", "alice", "1"));
+    const digits = "9".repeat(2_000);
+    await service.processMessage(message("101", "bob", digits));
+
+    const payloads = context.database
+      .prepare(
+        `SELECT payload_json FROM discord_outbox
+         WHERE operation_type = 'canonical_message'
+           AND json_extract(payload_json, '$.submissionId') = '101'
+         ORDER BY sequence_number`,
+      )
+      .all() as { payload_json: string }[];
+    const contents = payloads.map(({ payload_json }) =>
+      (JSON.parse(payload_json) as { content: string }).content,
+    );
+    expect(contents.length).toBeGreaterThan(1);
+    expect(contents.every((content) => content.length <= 2_000)).toBe(true);
+    expect(contents.map((content, index) => content.slice(index === 0 ? "bob: ".length : "↳ ".length)).join(""))
+      .toBe(digits);
+  });
+
+  it("derives Discord-valid nonces from production UUID operation IDs", async () => {
+    const productionService = new GameService(
+      context.repository,
+      context.adminRepository,
+      context.clock,
+      { next: () => randomUUID() },
+    );
+    const templateId = context.adminRepository.createTemplate(roundTemplate());
+    await productionService.activateRound(templateId);
+    await productionService.processMessage(message("100", "alice", "1"));
+
+    const nonces = context.database.prepare("SELECT nonce FROM discord_outbox").all() as { nonce: string }[];
+    expect(nonces).toHaveLength(2);
+    expect(nonces.every(({ nonce }) => nonce.length === 25)).toBe(true);
   });
 
   it("rolls back every decision write when an outbox insert fails", async () => {

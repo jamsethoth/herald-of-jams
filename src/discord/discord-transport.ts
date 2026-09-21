@@ -7,12 +7,29 @@ import {
 } from "discord.js";
 
 import type { DiscordTransport, InboundDiscordMessage } from "../application/contracts.js";
+import { AmbiguousDiscordError, DefiniteDiscordError } from "../application/outbox-dispatcher.js";
 
 export const DISCORD_GATEWAY_INTENTS = [
   GatewayIntentBits.Guilds,
   GatewayIntentBits.GuildMessages,
   GatewayIntentBits.MessageContent,
 ] as const;
+
+export function isEligiblePlayerMessage(authorIsBot: boolean, webhookId: string | null): boolean {
+  return !authorIsBot && webhookId === null;
+}
+
+export function classifySendError(error: unknown): DefiniteDiscordError | AmbiguousDiscordError {
+  const description = error instanceof Error ? error.message : "Discord send failed";
+  const hasResponseCode =
+    typeof error === "object" &&
+    error !== null &&
+    (("status" in error && typeof error.status === "number") ||
+      ("code" in error && typeof error.code === "number"));
+  return hasResponseCode
+    ? new DefiniteDiscordError(description)
+    : new AmbiguousDiscordError(description);
+}
 
 export function createDiscordClient(): Client {
   return new Client({ intents: [...DISCORD_GATEWAY_INTENTS] });
@@ -47,17 +64,27 @@ export class DiscordJsTransport implements DiscordTransport {
     enforceNonce: true;
     suppressNotifications: boolean;
   }): Promise<{ id: string; nonce?: string }> {
-    const channel = await textChannel(this.client, input.channelId);
-    if (!channel.isSendable()) {
-      throw new Error(`Discord channel ${input.channelId} cannot send messages`);
+    let channel: TextBasedChannel;
+    try {
+      channel = await textChannel(this.client, input.channelId);
+    } catch (error) {
+      throw new DefiniteDiscordError(error instanceof Error ? error.message : "channel lookup failed");
     }
-    const sent = await channel.send({
-      content: input.content,
-      nonce: input.nonce,
-      enforceNonce: input.enforceNonce,
-      allowedMentions: { parse: ["users"] },
-      ...(input.suppressNotifications ? { flags: MessageFlags.SuppressNotifications } : {}),
-    });
+    if (!channel.isSendable()) {
+      throw new DefiniteDiscordError(`Discord channel ${input.channelId} cannot send messages`);
+    }
+    let sent: Message;
+    try {
+      sent = await channel.send({
+        content: input.content,
+        nonce: input.nonce,
+        enforceNonce: input.enforceNonce,
+        allowedMentions: { parse: ["users"] },
+        ...(input.suppressNotifications ? { flags: MessageFlags.SuppressNotifications } : {}),
+      });
+    } catch (error) {
+      throw classifySendError(error);
+    }
     return { id: sent.id, ...(sent.nonce === null ? {} : { nonce: String(sent.nonce) }) };
   }
 
@@ -126,7 +153,9 @@ export class DiscordJsTransport implements DiscordTransport {
         return;
       }
       for (const message of ordered) {
-        yield inbound(message);
+        if (isEligiblePlayerMessage(message.author.bot, message.webhookId)) {
+          yield inbound(message);
+        }
       }
       cursor = ordered[ordered.length - 1]!.id;
       if (ordered.length < 100) {

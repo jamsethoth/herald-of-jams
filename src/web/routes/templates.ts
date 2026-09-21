@@ -118,6 +118,7 @@ export function registerTemplateRoutes(
     reply.view("templates-list.eta", {
       title: "Round templates",
       templates: repository.listTemplates(),
+      csrf: reply.generateCsrf(),
     }),
   );
 

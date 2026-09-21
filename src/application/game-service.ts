@@ -1,4 +1,5 @@
 import type { AdminRepository } from "../db/admin-repository.js";
+import { createHash } from "node:crypto";
 import type { GameRepository, LeaderboardEntry } from "../db/game-repository.js";
 import {
   cancelRound as cancelEngineRound,
@@ -136,10 +137,37 @@ export class GameService {
         predecessor?.id ?? null,
         operationType,
         JSON.stringify(payload),
-        `outbox:${id}`,
+        createHash("sha256").update(id).digest("base64url").slice(0, 25),
         this.clock.now().toISOString(),
       );
     return id;
+  }
+
+  private enqueueCanonical(
+    channelId: string,
+    displayName: string,
+    digits: string,
+    submissionId: string,
+  ): string[] {
+    const firstPrefix = `${displayName}: `;
+    const continuationPrefix = "↳ ";
+    const ids: string[] = [];
+    let remaining = digits;
+    let prefix = firstPrefix;
+    do {
+      const available = Math.max(1, 2_000 - prefix.length);
+      const part = remaining.slice(0, available);
+      remaining = remaining.slice(part.length);
+      ids.push(
+        this.enqueue(channelId, "canonical_message", {
+          content: `${prefix}${part}`,
+          submissionId,
+          part: ids.length + 1,
+        }),
+      );
+      prefix = continuationPrefix;
+    } while (remaining.length > 0);
+    return ids;
   }
 
   private ensurePlayer(playerId: string, displayName: string): void {
@@ -319,10 +347,12 @@ export class GameService {
           position: decision.position,
         });
         outboxOperationIds.push(
-          this.enqueue(round.channel_id, "canonical_message", {
-            content: `${message.displayName}: ${normalizedValue}`,
-            submissionId: message.id,
-          }),
+          ...this.enqueueCanonical(
+            round.channel_id,
+            message.displayName,
+            String(normalizedValue),
+            message.id,
+          ),
           this.enqueue(round.channel_id, "delete_original", { messageId: message.id }),
         );
         if (decision.bonusRuleIds.length > 0) {
@@ -407,10 +437,12 @@ export class GameService {
         delta,
       });
       outboxOperationIds.push(
-        this.enqueue(round.channel_id, "canonical_message", {
-          content: `${message.displayName}: ${originalDigits}`,
-          submissionId: message.id,
-        }),
+        ...this.enqueueCanonical(
+          round.channel_id,
+          message.displayName,
+          originalDigits,
+          message.id,
+        ),
         this.enqueue(round.channel_id, "delete_original", { messageId: message.id }),
       );
       if (options.deferResetAnnouncement !== true) {
@@ -568,22 +600,37 @@ export class GameService {
         content: "The round is complete. Final rewards have been recorded.",
         roundId: round.id,
       }),
-      this.enqueue(round.channel_id, "leaderboard_publication", {
-        content: this.renderLeaderboard(leaderboard),
-        roundId: round.id,
-        leaderboard,
-      }),
     );
+    for (const [index, content] of this.renderLeaderboard(leaderboard).entries()) {
+      outboxIds.push(
+        this.enqueue(round.channel_id, "leaderboard_publication", {
+          content,
+          roundId: round.id,
+          leaderboard,
+          page: index + 1,
+        }),
+      );
+    }
     this.audit("round_completed", round.id, null, { attemptId });
   }
 
-  private renderLeaderboard(entries: readonly LeaderboardEntry[]): string {
+  private renderLeaderboard(entries: readonly LeaderboardEntry[]): string[] {
     if (entries.length === 0) {
-      return "The seasonal leaderboard is empty.";
+      return ["The seasonal leaderboard is empty."];
     }
-    return entries
-      .map((entry, index) => `${index + 1}. ${entry.displayName}: ${entry.total}`)
-      .join("\n");
+    const pages: string[] = [];
+    let page = "Season leaderboard";
+    for (const [index, entry] of entries.entries()) {
+      const line = `${index + 1}. ${entry.displayName}: ${entry.total}`.slice(0, 1_975);
+      if (`${page}\n${line}`.length > 2_000) {
+        pages.push(page);
+        page = line;
+      } else {
+        page += `\n${line}`;
+      }
+    }
+    pages.push(page);
+    return pages;
   }
 
   async pauseRound(actorId: string | null = null): Promise<void> {

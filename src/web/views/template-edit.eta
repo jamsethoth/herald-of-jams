@@ -41,6 +41,7 @@
         </div>
       <% }) %>
     </fieldset>
-    <button>Save</button>
+    <button type="submit">Save</button>
+    <button type="submit" formaction="/admin/templates/preview">Preview</button>
   </form>
 </main>

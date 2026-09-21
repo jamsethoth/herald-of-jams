@@ -11,7 +11,11 @@ import {
   type GatewayInteraction,
   type GatewayMessage,
 } from "../src/discord/discord-adapter.js";
-import { DISCORD_GATEWAY_INTENTS } from "../src/discord/discord-transport.js";
+import {
+  DISCORD_GATEWAY_INTENTS,
+  classifySendError,
+  isEligiblePlayerMessage,
+} from "../src/discord/discord-transport.js";
 import { GatewayIntentBits } from "discord.js";
 import { createTestDatabase, type TestDatabaseContext } from "./fixtures.js";
 
@@ -45,6 +49,14 @@ class FakeGateway implements DiscordGateway {
 
   async interaction(payload: GatewayInteraction): Promise<void> {
     await this.handlers?.interactionCreate(payload);
+  }
+
+  async disconnect(): Promise<void> {
+    await this.handlers?.disconnected();
+  }
+
+  async reconnect(): Promise<void> {
+    await this.handlers?.reconnected();
   }
 }
 
@@ -110,6 +122,18 @@ describe("DiscordAdapter", () => {
     ]);
   });
 
+  it("uses the same player eligibility rule for live and historical messages", () => {
+    expect(isEligiblePlayerMessage(false, null)).toBe(true);
+    expect(isEligiblePlayerMessage(true, null)).toBe(false);
+    expect(isEligiblePlayerMessage(false, "webhook")).toBe(false);
+  });
+
+  it("treats API rejections as definite and network failures as ambiguous", () => {
+    expect(classifySendError({ status: 403 })).toMatchObject({ name: "DefiniteDiscordError" });
+    expect(classifySendError(Object.assign(new Error("socket reset"), { code: "ECONNRESET" })))
+      .toMatchObject({ name: "AmbiguousDiscordError" });
+  });
+
   it("registers the guild command, converts eligible messages, and stops cleanly", async () => {
     const subject = adapter();
     await subject.instance.start();
@@ -126,6 +150,8 @@ describe("DiscordAdapter", () => {
       createdAt: "2026-09-21T00:00:00.000Z",
     });
     expect(subject.dispatchNext).toHaveBeenCalledWith("channel-1");
+    expect(context.database.prepare("SELECT last_examined_message_id FROM channel_checkpoints").get())
+      .toEqual({ last_examined_message_id: "100" });
     expect(gateway.stopped).toBe(true);
   });
 
@@ -151,6 +177,33 @@ describe("DiscordAdapter", () => {
     expect(subject.dispatchNext).not.toHaveBeenCalled();
   });
 
+  it("buffers messages while disconnected and reconciles before releasing them", async () => {
+    const events: string[] = [];
+    const processMessage = vi.fn(async () => {
+      events.push("message");
+      return { kind: "duplicate" as const };
+    });
+    const instance = new DiscordAdapter({
+      gateway,
+      gameService: { processMessage },
+      dispatcher: { dispatchNext: vi.fn(async () => ({ kind: "idle" as const })) },
+      reconcile: async () => void events.push("reconcile"),
+      executor: new SerialExecutor(),
+      repository: context.repository,
+      clock: context.clock,
+      ids: context.ids,
+      config: { token: "token", guildId: "guild-1", channelId: "channel-1" },
+    });
+    await instance.start();
+    await gateway.disconnect();
+    await gateway.message(gatewayMessage());
+    expect(processMessage).not.toHaveBeenCalled();
+
+    await gateway.reconnect();
+    await vi.waitFor(() => expect(processMessage).toHaveBeenCalledOnce());
+    expect(events).toEqual(["reconcile", "message"]);
+  });
+
   it("records redacted operational failures without message content or secrets", async () => {
     const processMessage = vi.fn(async () => {
       throw new Error("failure included 1 and top-secret-token");
@@ -165,6 +218,36 @@ describe("DiscordAdapter", () => {
     expect(event.event_type).toBe("discord_adapter_failure");
     expect(event.details_json).not.toContain("sensitive-message-content");
     expect(event.details_json).not.toContain("top-secret-token");
+  });
+
+  it("gates later numeric work after persistence failure until reconciliation succeeds", async () => {
+    const processMessage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("database unavailable"))
+      .mockResolvedValue({ kind: "duplicate" as const });
+    const instance = new DiscordAdapter({
+      gateway,
+      gameService: { processMessage },
+      dispatcher: { dispatchNext: vi.fn(async () => ({ kind: "idle" as const })) },
+      reconcile: vi.fn(async () => undefined),
+      executor: new SerialExecutor(),
+      repository: context.repository,
+      clock: context.clock,
+      ids: context.ids,
+      config: { token: "token", guildId: "guild-1", channelId: "channel-1" },
+    });
+    await instance.start();
+
+    await Promise.all([
+      gateway.message(gatewayMessage({ id: "100" })),
+      gateway.message(gatewayMessage({ id: "101" })),
+    ]);
+    expect(processMessage).toHaveBeenCalledTimes(1);
+    expect(instance.hasCriticalFailure()).toBe(true);
+
+    await gateway.reconnect();
+    await vi.waitFor(() => expect(processMessage).toHaveBeenCalledTimes(2));
+    expect(instance.hasCriticalFailure()).toBe(false);
   });
 
   it("privately audits deletion of a delivered canonical message only", async () => {

@@ -43,6 +43,8 @@ interface AdminServerDependencies {
   outboxRepository?: OutboxRepository;
   permissionReport?: (channelId?: string) => PermissionReport | Promise<PermissionReport>;
   discordConnected?: () => boolean;
+  criticalFailure?: () => boolean;
+  outboxWake?: (channelId: string) => void;
 }
 
 interface LoginAttemptRow {
@@ -105,7 +107,7 @@ export function buildAdminServer(dependencies: AdminServerDependencies) {
       httpOnly: true,
       sameSite: "strict",
       secure: config.admin.secureCookie,
-      maxAge: SESSION_LIFETIME_MS / 1_000,
+      maxAge: SESSION_LIFETIME_MS,
     },
   });
   void app.register(csrfProtection, { sessionPlugin: "@fastify/session" });
@@ -212,6 +214,9 @@ export function buildAdminServer(dependencies: AdminServerDependencies) {
         database,
         permissionReport: dependencies.permissionReport,
         discordConnected: dependencies.discordConnected,
+        ...(dependencies.criticalFailure === undefined
+          ? {}
+          : { criticalFailure: dependencies.criticalFailure }),
       },
       requireAuthenticated,
     );
@@ -228,6 +233,8 @@ export function buildAdminServer(dependencies: AdminServerDependencies) {
         executor: dependencies.executor,
         adminRepository: dependencies.adminRepository,
         permissionReport: dependencies.permissionReport,
+        database,
+        ...(dependencies.outboxWake === undefined ? {} : { outboxWake: dependencies.outboxWake }),
       },
       requireAuthenticated,
       csrfHook,
@@ -237,6 +244,7 @@ export function buildAdminServer(dependencies: AdminServerDependencies) {
       database,
       dependencies.gameService,
       dependencies.executor,
+      dependencies.outboxWake,
       requireAuthenticated,
       csrfHook,
     );
@@ -256,6 +264,7 @@ export function buildAdminServer(dependencies: AdminServerDependencies) {
         dependencies.outboxRepository,
         requireAuthenticated,
         csrfHook,
+        dependencies.outboxWake,
       );
     }
   } else {

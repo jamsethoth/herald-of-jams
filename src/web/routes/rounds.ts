@@ -4,12 +4,23 @@ import type { GameService } from "../../application/game-service.js";
 import type { SerialExecutor } from "../../application/serial-executor.js";
 import type { AdminRepository } from "../../db/admin-repository.js";
 import type { PermissionReport } from "../../discord/permissions.js";
+import type Database from "better-sqlite3";
 
 interface RoundRouteDependencies {
   gameService: GameService;
   executor: SerialExecutor;
   adminRepository: AdminRepository;
   permissionReport(channelId?: string): PermissionReport | Promise<PermissionReport>;
+  database: Database.Database;
+  outboxWake?: (channelId: string) => void;
+}
+
+function activeChannel(database: Database.Database): string {
+  return (
+    database
+      .prepare("SELECT channel_id FROM rounds WHERE state IN ('waiting_for_start', 'counting', 'paused') LIMIT 1")
+      .get() as { channel_id: string } | undefined
+  )?.channel_id ?? "round-lifecycle";
 }
 
 export function registerRoundRoutes(
@@ -30,6 +41,7 @@ export function registerRoundRoutes(
       await dependencies.executor.run(template.channelId, () =>
         dependencies.gameService.activateRound(templateId),
       );
+      dependencies.outboxWake?.(template.channelId);
       return reply.redirect("/admin");
     } catch (error) {
       return reply.code(409).type("text/plain").send(error instanceof Error ? error.message : "Conflict");
@@ -38,7 +50,9 @@ export function registerRoundRoutes(
 
   app.post("/admin/rounds/pause", hooks, async (_request, reply) => {
     try {
-      await dependencies.executor.run("round-lifecycle", () => dependencies.gameService.pauseRound("admin"));
+      const channelId = activeChannel(dependencies.database);
+      await dependencies.executor.run(channelId, () => dependencies.gameService.pauseRound("admin"));
+      dependencies.outboxWake?.(channelId);
       return reply.redirect("/admin");
     } catch (error) {
       return reply.code(409).type("text/plain").send(error instanceof Error ? error.message : "Conflict");
@@ -47,7 +61,9 @@ export function registerRoundRoutes(
 
   app.post("/admin/rounds/resume", hooks, async (_request, reply) => {
     try {
-      await dependencies.executor.run("round-lifecycle", () => dependencies.gameService.resumeRound("admin"));
+      const channelId = activeChannel(dependencies.database);
+      await dependencies.executor.run(channelId, () => dependencies.gameService.resumeRound("admin"));
+      dependencies.outboxWake?.(channelId);
       return reply.redirect("/admin");
     } catch (error) {
       return reply.code(409).type("text/plain").send(error instanceof Error ? error.message : "Conflict");
@@ -60,7 +76,9 @@ export function registerRoundRoutes(
       return reply.code(400).type("text/plain").send("Type CANCEL to confirm cancellation");
     }
     try {
-      await dependencies.executor.run("round-lifecycle", () => dependencies.gameService.cancelRound("admin"));
+      const channelId = activeChannel(dependencies.database);
+      await dependencies.executor.run(channelId, () => dependencies.gameService.cancelRound("admin"));
+      dependencies.outboxWake?.(channelId);
       return reply.redirect("/admin");
     } catch (error) {
       return reply.code(409).type("text/plain").send(error instanceof Error ? error.message : "Conflict");

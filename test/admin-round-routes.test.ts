@@ -129,6 +129,13 @@ describe("round administration routes", () => {
     });
     expect(list.body).toContain("Edited");
     expect(list.body).not.toContain("<script>");
+    expect(list.body).toContain(`/admin/rounds/activate/${stored.id}`);
+    const editPage = await app.inject({
+      method: "GET",
+      url: `/admin/templates/${stored.id}/edit`,
+      headers: { cookie },
+    });
+    expect(editPage.body).toContain('formaction="/admin/templates/preview"');
 
     const noCsrf = await app.inject({
       method: "POST",
@@ -252,6 +259,9 @@ describe("round administration routes", () => {
     expect(dashboard.body).toContain("Expected position: 1");
     expect(dashboard.body).toContain("Unresolved Discord operations: 2");
     expect(dashboard.body).toContain('name="_csrf"');
+    expect(dashboard.body).toContain('/admin/rounds/pause');
+    expect(dashboard.body).toContain('/admin/rounds/cancel');
+    expect(dashboard.body).toContain('/admin/templates');
     await app.close();
   });
 });

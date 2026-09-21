@@ -9,6 +9,7 @@ export function registerModerationRoutes(
   database: Database.Database,
   gameService: GameService,
   executor: SerialExecutor,
+  outboxWake: ((channelId: string) => void) | undefined,
   requireAuthenticated: preHandlerHookHandler,
   csrfHook: preHandlerHookHandler,
 ): void {
@@ -36,7 +37,8 @@ export function registerModerationRoutes(
         return reply.code(400).send("Discord user ID is required");
       }
       try {
-        await executor.run("round-lifecycle", () =>
+        const channelId = activeChannel(database);
+        await executor.run(channelId, () =>
           gameService.banPlayer(
             body.playerId as string,
             typeof body.displayName === "string" && body.displayName.length > 0
@@ -45,6 +47,7 @@ export function registerModerationRoutes(
             "admin",
           ),
         );
+        outboxWake?.(channelId);
         return reply.redirect("/admin/moderation");
       } catch (error) {
         return reply.code(409).send(error instanceof Error ? error.message : "Conflict");
@@ -61,13 +64,23 @@ export function registerModerationRoutes(
         return reply.code(400).send("Discord user ID is required");
       }
       try {
-        await executor.run("round-lifecycle", () =>
+        const channelId = activeChannel(database);
+        await executor.run(channelId, () =>
           gameService.unbanPlayer(body.playerId as string, "admin"),
         );
+        outboxWake?.(channelId);
         return reply.redirect("/admin/moderation");
       } catch (error) {
         return reply.code(409).send(error instanceof Error ? error.message : "Conflict");
       }
     },
   );
+}
+
+function activeChannel(database: Database.Database): string {
+  return (
+    database
+      .prepare("SELECT channel_id FROM rounds WHERE state IN ('waiting_for_start', 'counting', 'paused') LIMIT 1")
+      .get() as { channel_id: string } | undefined
+  )?.channel_id ?? "round-lifecycle";
 }
