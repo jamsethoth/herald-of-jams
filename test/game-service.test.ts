@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 
 import { GameService } from "../src/application/game-service.js";
+import { DEFAULT_ANNOUNCEMENTS } from "../src/domain/announcement-templates.js";
 import {
   createTestDatabase,
   message,
@@ -12,6 +13,17 @@ import {
 function scalar(context: TestDatabaseContext, sql: string): number {
   const row = context.database.prepare(sql).get() as { value: number };
   return row.value;
+}
+
+function outboxContents(context: TestDatabaseContext, operationType: string): string[] {
+  return (
+    context.database
+      .prepare(
+        `SELECT payload_json FROM discord_outbox
+         WHERE operation_type = ? ORDER BY sequence_number`,
+      )
+      .all(operationType) as { payload_json: string }[]
+  ).map(({ payload_json }) => (JSON.parse(payload_json) as { content: string }).content);
 }
 
 describe("GameService", () => {
@@ -251,7 +263,53 @@ describe("GameService", () => {
     expect(scalar(context, "SELECT COUNT(*) AS value FROM round_bans")).toBe(0);
   });
 
-  it("cancels provisionally scored attempts while retaining committed penalties", async () => {
+  it("completes a one-value round using its activation-time announcement snapshot", async () => {
+    const templateId = context.adminRepository.createTemplate(
+      roundTemplate({
+        start: 2,
+        target: 2,
+        bonusRules: [{ id: "prime", predicate: { kind: "prime" } }],
+        announcements: {
+          bonus: "Custom {player} +{bonusPoints}",
+          completion: "Custom complete",
+        },
+      }),
+    );
+    await service.activateRound(templateId);
+    context.adminRepository.updateAnnouncementDefaults(
+      { ...DEFAULT_ANNOUNCEMENTS, completion: "Changed after activation" },
+      "admin",
+    );
+
+    await service.processMessage(message("100", "alice", "2"));
+
+    expect(context.database.prepare("SELECT state FROM rounds").get()).toEqual({
+      state: "completed",
+    });
+    expect(outboxContents(context, "bonus_announcement")).toEqual(["Custom alice +1"]);
+    expect(outboxContents(context, "completion_announcement")).toEqual(["Custom complete"]);
+  });
+
+  it("falls back to built-in reset wording for a pre-revision compiled round", async () => {
+    await activate();
+    const row = context.database.prepare("SELECT compiled_config_json FROM rounds").get() as {
+      compiled_config_json: string;
+    };
+    const compiled = JSON.parse(row.compiled_config_json) as Record<string, unknown>;
+    delete compiled.announcements;
+    context.database
+      .prepare("UPDATE rounds SET compiled_config_json = ?")
+      .run(JSON.stringify(compiled));
+    await service.processMessage(message("100", "alice", "1"));
+
+    await service.processMessage(message("101", "alice", "2"));
+
+    expect(outboxContents(context, "reset_announcement")).toEqual([
+      DEFAULT_ANNOUNCEMENTS.reset.replace("{start}", "1"),
+    ]);
+  });
+
+  it("cancels provisional rewards and removes penalties owned by the round", async () => {
     await activate();
     await service.processMessage(message("100", "alice", "1"));
     await service.processMessage(message("101", "alice", "2"));
@@ -263,9 +321,20 @@ describe("GameService", () => {
     expect(context.database.prepare("SELECT state FROM rounds").get()).toEqual({ state: "cancelled" });
     expect(scalar(context, "SELECT COUNT(*) AS value FROM attempt_contributions")).toBe(0);
     expect(scalar(context, "SELECT COUNT(*) AS value FROM round_bans")).toBe(0);
-    expect(context.repository.leaderboard()).toEqual([
-      { playerId: "alice", displayName: "alice", total: -2 },
+    expect(context.repository.leaderboard()).toEqual([]);
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM score_ledger WHERE entry_type = 'penalty'"))
+      .toBe(0);
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM round_player_penalties")).toBe(0);
+    expect(outboxContents(context, "cancellation_announcement")).toEqual([
+      DEFAULT_ANNOUNCEMENTS.cancellation,
     ]);
+    const cancellationAudit = context.database
+      .prepare("SELECT details_json FROM audit_events WHERE event_type = 'round_cancelled'")
+      .get() as { details_json: string };
+    expect(JSON.parse(cancellationAudit.details_json)).toMatchObject({
+      discardedPenaltyEntries: 1,
+      discardedPenaltyPoints: 2,
+    });
   });
 
   it("enforces one active round and blocks season reset while active", async () => {

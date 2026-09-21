@@ -8,10 +8,14 @@ import {
   resumeRound as resumeEngineRound,
   type EngineState,
 } from "../domain/game-engine.js";
+import {
+  DEFAULT_ANNOUNCEMENTS,
+  renderAnnouncement,
+} from "../domain/announcement-templates.js";
 import { parseNumericSubmission } from "../domain/numeric-submission.js";
 import { compileRound } from "../domain/round-compiler.js";
 import { additionalPenalty, participationAwards, type PenaltyTotal } from "../domain/scoring.js";
-import type { CompiledRound } from "../domain/types.js";
+import type { AnnouncementTemplates, CompiledRound } from "../domain/types.js";
 import type {
   Clock,
   IdGenerator,
@@ -40,6 +44,10 @@ type OutboxOperation =
   | "completion_announcement"
   | "cancellation_announcement"
   | "leaderboard_publication";
+
+function announcements(compiled: CompiledRound): Readonly<AnnouncementTemplates> {
+  return compiled.announcements ?? DEFAULT_ANNOUNCEMENTS;
+}
 
 export class GameService {
   constructor(
@@ -189,7 +197,7 @@ export class GameService {
       }
       this.assertNoUnsettledTerminalRound();
       const input = this.adminRepository.getTemplate(templateId);
-      const compiled = compileRound(input);
+      const compiled = compileRound(input, this.adminRepository.getAnnouncementDefaults());
       const now = this.clock.now().toISOString();
       const seasonId = this.ensureSeason(now);
       const roundId = this.ids.next();
@@ -358,13 +366,16 @@ export class GameService {
         if (decision.bonusRuleIds.length > 0) {
           outboxOperationIds.push(
             this.enqueue(round.channel_id, "bonus_announcement", {
-              content: `${message.displayName} earned ${decision.bonusRuleIds.length} provisional bonus point${decision.bonusRuleIds.length === 1 ? "" : "s"}.`,
+              content: renderAnnouncement("bonus", announcements(compiled).bonus, {
+                player: message.displayName,
+                bonusPoints: decision.bonusRuleIds.length,
+              }),
               submissionId: message.id,
             }),
           );
         }
         if (decision.completesRound) {
-          this.completeRound(round, attemptId, outboxOperationIds);
+          this.completeRound(round, attemptId, compiled, outboxOperationIds);
         }
         return { kind: "recorded", decision: "accepted", outboxOperationIds };
       }
@@ -448,7 +459,9 @@ export class GameService {
       if (options.deferResetAnnouncement !== true) {
         outboxOperationIds.push(
           this.enqueue(round.channel_id, "reset_announcement", {
-            content: `The attempt was reset. Provisional rewards were discarded; penalties remain. Start again at ${compiled.input.start}.`,
+            content: renderAnnouncement("reset", announcements(compiled).reset, {
+              start: compiled.input.start,
+            }),
             submissionId: message.id,
           }),
         );
@@ -537,13 +550,20 @@ export class GameService {
       }
       const compiled = JSON.parse(breaking.compiled_config_json) as CompiledRound;
       return this.enqueue(breaking.channel_id, "reset_announcement", {
-        content: `The attempt was reset. Provisional rewards were discarded; penalties remain. Start again at ${compiled.input.start}.`,
+        content: renderAnnouncement("reset", announcements(compiled).reset, {
+          start: compiled.input.start,
+        }),
         submissionId: breakingMessageId,
       });
     });
   }
 
-  private completeRound(round: RoundRow, attemptId: string, outboxIds: string[]): void {
+  private completeRound(
+    round: RoundRow,
+    attemptId: string,
+    compiled: CompiledRound,
+    outboxIds: string[],
+  ): void {
     const now = this.clock.now().toISOString();
     const contributions = this.database
       .prepare(
@@ -597,7 +617,7 @@ export class GameService {
     const leaderboard = this.repository.leaderboard();
     outboxIds.push(
       this.enqueue(round.channel_id, "completion_announcement", {
-        content: "The round is complete. Final rewards have been recorded.",
+        content: renderAnnouncement("completion", announcements(compiled).completion),
         roundId: round.id,
       }),
     );
@@ -679,6 +699,7 @@ export class GameService {
         bannedPlayerIds: new Set(),
       });
       const now = this.clock.now().toISOString();
+      const compiled = JSON.parse(round.compiled_config_json) as CompiledRound;
       const activeAttempt = this.database
         .prepare("SELECT id FROM attempts WHERE round_id = ? AND state = 'active'")
         .get(round.id) as AttemptRow | undefined;
@@ -688,6 +709,16 @@ export class GameService {
           .prepare("UPDATE attempts SET state = 'cancelled', ended_at = ? WHERE id = ?")
           .run(now, activeAttempt.id);
       }
+      const penaltyTotals = this.database
+        .prepare(
+          `SELECT COUNT(*) AS entry_count, COALESCE(SUM(delta), 0) AS point_total
+           FROM score_ledger WHERE round_id = ? AND entry_type = 'penalty'`,
+        )
+        .get(round.id) as { entry_count: number; point_total: number };
+      this.database
+        .prepare("DELETE FROM score_ledger WHERE round_id = ? AND entry_type = 'penalty'")
+        .run(round.id);
+      this.database.prepare("DELETE FROM round_player_penalties WHERE round_id = ?").run(round.id);
       this.database
         .prepare(
           `UPDATE rounds SET state = 'cancelled', cancelled_at = ?, paused_from_state = NULL
@@ -696,10 +727,13 @@ export class GameService {
         .run(now, round.id);
       this.database.prepare("DELETE FROM round_bans WHERE round_id = ?").run(round.id);
       this.enqueue(round.channel_id, "cancellation_announcement", {
-        content: "The round was cancelled. Provisional rewards were discarded; penalties remain.",
+        content: renderAnnouncement("cancellation", announcements(compiled).cancellation),
         roundId: round.id,
       });
-      this.audit("round_cancelled", round.id, actorId, {});
+      this.audit("round_cancelled", round.id, actorId, {
+        discardedPenaltyEntries: penaltyTotals.entry_count,
+        discardedPenaltyPoints: -penaltyTotals.point_total,
+      });
     });
   }
 
