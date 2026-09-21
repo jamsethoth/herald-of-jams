@@ -1,0 +1,179 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import type Database from "better-sqlite3";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { migrate, openDatabase } from "../src/db/database.js";
+
+const temporaryDirectories: string[] = [];
+
+function temporaryDatabase(): { database: Database.Database; directory: string } {
+  const directory = mkdtempSync(join(tmpdir(), "herald-of-jams-"));
+  temporaryDirectories.push(directory);
+  return { database: openDatabase(join(directory, "game.sqlite")), directory };
+}
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+describe("database migrations", () => {
+  it("opens SQLite with the required connection pragmas", () => {
+    const { database } = temporaryDatabase();
+
+    expect(database.pragma("foreign_keys", { simple: true })).toBe(1);
+    expect(database.pragma("journal_mode", { simple: true })).toBe("wal");
+    expect(database.pragma("busy_timeout", { simple: true })).toBe(5000);
+
+    database.close();
+  });
+
+  it("creates every table and required operational index idempotently", () => {
+    const { database } = temporaryDatabase();
+
+    migrate(database);
+    migrate(database);
+
+    const objects = database
+      .prepare(
+        "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%'",
+      )
+      .all() as { type: "table" | "index"; name: string }[];
+    const tables = objects.filter(({ type }) => type === "table").map(({ name }) => name);
+    const indexes = objects.filter(({ type }) => type === "index").map(({ name }) => name);
+
+    expect(tables).toEqual(
+      expect.arrayContaining([
+        "schema_migrations",
+        "seasons",
+        "players",
+        "round_templates",
+        "rounds",
+        "compiled_entries",
+        "attempts",
+        "submissions",
+        "attempt_contributions",
+        "round_player_penalties",
+        "round_bans",
+        "score_ledger",
+        "discord_outbox",
+        "channel_checkpoints",
+        "audit_events",
+        "admin_sessions",
+        "login_attempts",
+      ]),
+    );
+    expect(indexes).toEqual(
+      expect.arrayContaining([
+        "rounds_one_active",
+        "discord_outbox_pending",
+        "audit_events_created_at",
+        "score_ledger_season_player",
+        "admin_sessions_expires_at",
+      ]),
+    );
+    expect(database.prepare("SELECT version FROM schema_migrations").all()).toEqual([
+      { version: 1 },
+    ]);
+
+    database.close();
+  });
+
+  it("enforces unique Discord message IDs and channel sequence numbers", () => {
+    const { database } = temporaryDatabase();
+    migrate(database);
+
+    database
+      .prepare("INSERT INTO seasons (id, started_at) VALUES (?, ?)")
+      .run("season-1", "2026-09-21T00:00:00.000Z");
+    database
+      .prepare(
+        `INSERT INTO round_templates
+          (id, private_name, channel_id, start_value, target_value, step_value, rules_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run("template-1", "Test", "channel-1", 1, 5, 1, "{}", "now", "now");
+    database
+      .prepare(
+        `INSERT INTO rounds
+          (id, template_id, season_id, channel_id, state, compiled_config_json, activated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "round-1",
+        "template-1",
+        "season-1",
+        "channel-1",
+        "counting",
+        "{}",
+        "now",
+      );
+    database
+      .prepare("INSERT INTO attempts (id, round_id, state, started_at) VALUES (?, ?, ?, ?)")
+      .run("attempt-1", "round-1", "active", "now");
+
+    const insertSubmission = database.prepare(
+      `INSERT INTO submissions
+        (message_id, round_id, attempt_id, author_id, original_digits, normalized_value, decision, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertSubmission.run("message-1", "round-1", "attempt-1", "alice", "1", 1, "accepted", "now");
+    expect(() =>
+      insertSubmission.run(
+        "message-1",
+        "round-1",
+        "attempt-1",
+        "alice",
+        "1",
+        1,
+        "accepted",
+        "now",
+      ),
+    ).toThrow(/UNIQUE constraint failed: submissions.message_id/);
+
+    const insertOutbox = database.prepare(
+      `INSERT INTO discord_outbox
+        (id, channel_id, sequence_number, operation_type, payload_json, nonce, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertOutbox.run(
+      "operation-1",
+      "channel-1",
+      1,
+      "delete_original",
+      "{}",
+      "nonce-1",
+      "pending",
+      "now",
+    );
+    expect(() =>
+      insertOutbox.run(
+        "operation-2",
+        "channel-1",
+        1,
+        "delete_original",
+        "{}",
+        "nonce-2",
+        "pending",
+        "now",
+      ),
+    ).toThrow(/UNIQUE constraint failed: discord_outbox.channel_id, discord_outbox.sequence_number/);
+
+    database.close();
+  });
+
+  it("refuses a database created by an unknown future schema version", () => {
+    const { database } = temporaryDatabase();
+    migrate(database);
+    database
+      .prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
+      .run(999, "future");
+
+    expect(() => migrate(database)).toThrow(/future schema version 999/i);
+    database.close();
+  });
+});
