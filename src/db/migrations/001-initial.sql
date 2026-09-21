@@ -146,7 +146,7 @@ CREATE TABLE discord_outbox (
   )),
   payload_json TEXT NOT NULL CHECK (json_valid(payload_json)),
   nonce TEXT NOT NULL UNIQUE,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'in_flight', 'delivered', 'failed', 'needs_review', 'abandoned')),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'delivering', 'delivered', 'retry_wait', 'needs_review', 'abandoned')),
   attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 9007199254740991),
   next_attempt_at TEXT,
   last_error TEXT,
@@ -159,7 +159,7 @@ CREATE TABLE discord_outbox (
 
 CREATE INDEX discord_outbox_pending
   ON discord_outbox (channel_id, sequence_number)
-  WHERE status IN ('pending', 'failed', 'in_flight', 'needs_review');
+  WHERE status IN ('pending', 'delivering', 'retry_wait', 'needs_review');
 
 CREATE TABLE channel_checkpoints (
   channel_id TEXT PRIMARY KEY,
