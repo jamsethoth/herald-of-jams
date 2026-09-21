@@ -1,0 +1,15 @@
+<main>
+  <h1>Template preview</h1>
+  <p>Sequence: <%= it.sequence %></p>
+  <p>Required submissions: <%= it.required %></p>
+  <p>Bonus matches: <%= it.bonusMatches %></p>
+  <p>Penalty thresholds: <%= it.thresholds %></p>
+  <h2>Resolved announcements</h2>
+  <dl>
+    <dt>Round start</dt><dd><%= it.announcements.start %></dd>
+    <dt>Bonus</dt><dd><%= it.announcements.bonus %></dd>
+    <dt>Reset</dt><dd><%= it.announcements.reset %></dd>
+    <dt>Completion</dt><dd><%= it.announcements.completion %></dd>
+    <dt>Cancellation</dt><dd><%= it.announcements.cancellation %></dd>
+  </dl>
+</main>

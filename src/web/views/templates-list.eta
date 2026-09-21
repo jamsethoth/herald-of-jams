@@ -1,0 +1,15 @@
+<main>
+  <h1>Round templates</h1>
+  <p><a href="/admin/templates/new">Create template</a></p>
+  <ul>
+  <% it.templates.forEach(function(template) { %>
+    <li>
+      <a href="/admin/templates/<%= template.id %>/edit"><%= template.name %></a> — <%= template.channelId %>
+      <form method="post" action="/admin/rounds/activate/<%= template.id %>">
+        <input type="hidden" name="_csrf" value="<%= it.csrf %>">
+        <button>Activate round</button>
+      </form>
+    </li>
+  <% }) %>
+  </ul>
+</main>

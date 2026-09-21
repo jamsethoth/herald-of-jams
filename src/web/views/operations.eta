@@ -1,0 +1,11 @@
+<main>
+  <h1>Discord operations</h1>
+  <table><thead><tr><th>Type</th><th>Round</th><th>Submission</th><th>Sequence</th><th>Predecessor</th><th>Attempts</th><th>Next retry</th><th>Error</th><th>Status</th></tr></thead>
+  <tbody><% it.operations.forEach(function(operation) { %><tr><td><%= operation.operation_type %></td><td><%= operation.round_id || "" %></td><td><%= operation.submission_id || "" %></td><td><%= operation.sequence_number %></td><td><%= operation.predecessor_id || "" %></td><td><%= operation.attempt_count %></td><td><%= operation.next_attempt_at || "" %></td><td><%= operation.display_error || "" %></td><td><%= operation.status %>
+    <% if (operation.status === "retry_wait") { %><form method="post" action="/admin/operations/<%= operation.id %>/retry"><input type="hidden" name="_csrf" value="<%= it.csrf %>"><button>Retry</button></form><% } %>
+    <% if (operation.status === "needs_review") { %>
+      <form method="post" action="/admin/operations/<%= operation.id %>/mark-delivered"><input type="hidden" name="_csrf" value="<%= it.csrf %>"><input name="discordMessageId" placeholder="Discord message ID" required><button>Mark delivered</button></form>
+      <form method="post" action="/admin/operations/<%= operation.id %>/abandon"><input type="hidden" name="_csrf" value="<%= it.csrf %>"><input name="reason" placeholder="Reason" required><input name="confirmation" placeholder="Type ABANDON" required><button>Abandon</button></form>
+    <% } %>
+  </td></tr><% }) %></tbody></table>
+</main>

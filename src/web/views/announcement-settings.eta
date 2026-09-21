@@ -1,0 +1,28 @@
+<main>
+  <h1>Announcement defaults</h1>
+  <p>Templates may override these defaults. Changes apply only to rounds activated afterward.</p>
+  <form method="post" action="/admin/settings/announcements">
+    <input type="hidden" name="_csrf" value="<%= it.csrf %>">
+    <label>Round start announcement
+      <textarea name="start" maxlength="1900" required><%= it.announcements.start %></textarea>
+    </label>
+    <p>Optional placeholder: {start}</p>
+    <label>Bonus announcement
+      <textarea name="bonus" maxlength="1900" required><%= it.announcements.bonus %></textarea>
+    </label>
+    <p>Allowed placeholders: {player}, {bonusPoints}</p>
+    <label>Reset announcement
+      <textarea name="reset" maxlength="1900" required><%= it.announcements.reset %></textarea>
+    </label>
+    <p>Allowed placeholder: {start}</p>
+    <label>Completion announcement
+      <textarea name="completion" maxlength="1900" required><%= it.announcements.completion %></textarea>
+    </label>
+    <p>No placeholders.</p>
+    <label>Cancellation announcement
+      <textarea name="cancellation" maxlength="1900" required><%= it.announcements.cancellation %></textarea>
+    </label>
+    <p>No placeholders.</p>
+    <button type="submit">Save defaults</button>
+  </form>
+</main>

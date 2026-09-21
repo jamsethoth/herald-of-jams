@@ -1,0 +1,25 @@
+<main>
+  <h1>Herald of Jams administration</h1>
+  <p>Discord <%= it.connected ? "connected" : "disconnected" %></p>
+  <p>Permissions: <%= it.permissions.ok ? "ready" : it.permissions.missing.join(", ") %></p>
+  <% if (it.round) { %>
+    <p>Round state: <%= it.round.state %></p>
+    <p>Expected position: <%= it.expectedPosition %></p>
+    <% if (it.round.state === "paused") { %>
+      <form method="post" action="/admin/rounds/resume"><input type="hidden" name="_csrf" value="<%= it.csrf %>"><button>Resume round</button></form>
+    <% } else { %>
+      <form method="post" action="/admin/rounds/pause"><input type="hidden" name="_csrf" value="<%= it.csrf %>"><button>Pause round</button></form>
+    <% } %>
+    <form method="post" action="/admin/rounds/cancel">
+      <input type="hidden" name="_csrf" value="<%= it.csrf %>">
+      <label>Type CANCEL <input name="confirmation" required></label>
+      <button>Cancel round</button>
+    </form>
+  <% } else { %><p>No active round</p><% } %>
+  <p>Unresolved Discord operations: <%= it.unresolved %></p>
+  <p>Critical failures: <%= it.critical %></p>
+  <form method="post" action="/admin/logout">
+    <input type="hidden" name="_csrf" value="<%= it.csrf %>">
+    <button>Log out</button>
+  </form>
+</main>

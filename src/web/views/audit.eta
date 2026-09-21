@@ -1,0 +1,5 @@
+<main>
+  <h1>Audit events</h1>
+  <form method="get" action="/admin/audit"><input name="eventType" placeholder="Event type"><input name="actorId" placeholder="Actor ID"><input name="roundId" placeholder="Round ID"><button>Filter</button></form>
+  <table><tbody><% it.events.forEach(function(event) { %><tr><td><%= event.created_at %></td><td><%= event.event_type %></td><td><%= event.round_id || "" %></td><td><%= event.actor_id || "" %></td><td><%= event.details_json %></td></tr><% }) %></tbody></table>
+</main>

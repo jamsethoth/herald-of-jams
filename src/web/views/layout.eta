@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title><%= it.title %></title>
+    <link rel="stylesheet" href="/admin/static/admin.css">
+  </head>
+  <body>
+    <nav aria-label="Administration">
+      <a href="/admin">Dashboard</a>
+      <a href="/admin/templates">Templates</a>
+      <a href="/admin/settings/announcements">Announcement defaults</a>
+      <a href="/admin/moderation">Moderation</a>
+      <a href="/admin/leaderboard">Leaderboard</a>
+      <a href="/admin/operations">Operations</a>
+      <a href="/admin/audit">Audit</a>
+    </nav>
+    <%~ it.body %>
+  </body>
+</html>
