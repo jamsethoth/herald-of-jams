@@ -74,12 +74,27 @@ describe("compileRound", () => {
     );
   });
 
+  it("compiles equal start and target as one immutable entry", () => {
+    const compiled = compileRound(
+      template({
+        start: 2,
+        target: 2,
+        step: 1,
+        skipRules: [{ kind: "prime" }],
+        announcements: { completion: "Done" },
+      }),
+    );
+
+    expect(compiled.entries.map(({ value }) => value)).toEqual([2]);
+    expect(compiled.announcements.completion).toBe("Done");
+    expect(Object.isFrozen(compiled.announcements)).toBe(true);
+  });
+
   it.each([
     ["unsafe start", { start: Number.MAX_SAFE_INTEGER + 1 }],
     ["negative start", { start: -1 }],
     ["unsafe target", { target: Number.MAX_SAFE_INTEGER + 1 }],
     ["negative target", { target: -1 }],
-    ["equal bounds", { start: 1, target: 1 }],
     ["reversed bounds", { start: 2, target: 1 }],
     ["zero step", { step: 0 }],
     ["negative step", { step: -1 }],

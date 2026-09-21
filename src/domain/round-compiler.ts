@@ -1,5 +1,10 @@
 import { matchesPredicate } from "./predicates.js";
+import {
+  DEFAULT_ANNOUNCEMENTS,
+  resolveAnnouncements,
+} from "./announcement-templates.js";
 import type {
+  AnnouncementTemplates,
   BonusRule,
   CompiledEntry,
   CompiledRound,
@@ -76,19 +81,25 @@ function copyInput(input: RoundTemplateInput): Readonly<RoundTemplateInput> {
     step: input.step,
     skipRules: Object.freeze(input.skipRules.map(copyPredicate)),
     bonusRules: copyBonusRules(input.bonusRules),
+    ...(input.announcements === undefined
+      ? {}
+      : { announcements: Object.freeze({ ...input.announcements }) }),
     ...(input.notes === undefined ? {} : { notes: input.notes }),
   };
   return Object.freeze(copied);
 }
 
-export function compileRound(input: RoundTemplateInput): CompiledRound {
+export function compileRound(
+  input: RoundTemplateInput,
+  defaults: AnnouncementTemplates = DEFAULT_ANNOUNCEMENTS,
+): CompiledRound {
   assertNonNegativeSafeInteger(input.start, "start");
   assertNonNegativeSafeInteger(input.target, "target");
   if (!Number.isSafeInteger(input.step) || input.step <= 0) {
     throw new RangeError("step must be a positive safe integer");
   }
-  if (input.target <= input.start) {
-    throw new RangeError("target must be greater than start");
+  if (input.target < input.start) {
+    throw new RangeError("target must be greater than or equal to start");
   }
 
   const distance = input.target - input.start;
@@ -102,7 +113,10 @@ export function compileRound(input: RoundTemplateInput): CompiledRound {
   }
 
   const copiedInput = copyInput(input);
-  if (copiedInput.skipRules.some((rule) => matchesPredicate(copiedInput.target, rule))) {
+  if (
+    copiedInput.target !== copiedInput.start &&
+    copiedInput.skipRules.some((rule) => matchesPredicate(copiedInput.target, rule))
+  ) {
     throw new RangeError("target cannot be skipped by a skip rule");
   }
 
@@ -126,5 +140,9 @@ export function compileRound(input: RoundTemplateInput): CompiledRound {
     entries.push(Object.freeze({ position: entries.length, value, bonusRuleIds }));
   }
 
-  return Object.freeze({ input: copiedInput, entries: Object.freeze(entries) });
+  return Object.freeze({
+    input: copiedInput,
+    entries: Object.freeze(entries),
+    announcements: resolveAnnouncements(defaults, copiedInput.announcements),
+  });
 }

@@ -14,6 +14,17 @@ export interface BonusRule {
   predicate: RulePredicate;
 }
 
+export type AnnouncementKind = "bonus" | "reset" | "completion" | "cancellation";
+
+export interface AnnouncementTemplates {
+  bonus: string;
+  reset: string;
+  completion: string;
+  cancellation: string;
+}
+
+export type AnnouncementOverrides = Partial<AnnouncementTemplates>;
+
 export interface RoundTemplateInput {
   name: string;
   notes?: string;
@@ -23,6 +34,7 @@ export interface RoundTemplateInput {
   step: number;
   skipRules: readonly RulePredicate[];
   bonusRules: readonly BonusRule[];
+  announcements?: AnnouncementOverrides;
 }
 
 export interface CompiledEntry {
@@ -34,4 +46,5 @@ export interface CompiledEntry {
 export interface CompiledRound {
   input: Readonly<RoundTemplateInput>;
   entries: readonly CompiledEntry[];
+  announcements: Readonly<AnnouncementTemplates>;
 }
