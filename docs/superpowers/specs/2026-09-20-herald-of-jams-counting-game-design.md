@@ -121,19 +121,23 @@ A round moves through these states:
 
 ```text
 Draft -> Ready -> WaitingForStart -> Counting -> Completed
-                              ^          |
-                              |          v
-                              +------- Broken
+Counting -> Broken -> WaitingForStart
+WaitingForStart | Counting -> Paused -> preserved prior state
+WaitingForStart | Counting | Paused -> Cancelled
 ```
 
 - **Draft:** Configuration may be edited and previewed.
 - **Ready:** Compilation succeeded and the immutable configuration is ready for activation.
 - **WaitingForStart:** The round is active but no attempt is counting. Only the original starting number begins an attempt.
 - **Counting:** The engine expects the next compiled sequence entry.
+- **Paused:** A reversible administrative state that preserves the prior `WaitingForStart` or `Counting` state, active attempt, expected value, provisional rewards, penalties, and bans. Resuming returns to the preserved state. Numeric-only messages received while paused are deleted without evaluation, canonical replacement, or score change.
 - **Broken:** A transient recorded outcome that closes the failed attempt, announces the failure, and returns the round to `WaitingForStart`.
-- **Completed:** The target was accepted, successful-attempt rewards were committed, and the updated leaderboard was published.
+- **Completed:** A terminal successful outcome. The target was accepted, successful-attempt rewards were committed, and required completion and leaderboard-publication work was created. Discord publication determines operational settlement but does not delay the state transition.
+- **Cancelled:** A terminal administrative outcome. Cancellation closes any active attempt, discards its provisional participation and bonus data, preserves already committed penalties, expires round bans, and creates required cancellation-announcement work. A cancelled round cannot be resumed.
 
 While waiting for the starting number, other numeric-only messages are deleted and ignored. They cause no score change and receive no canonical replacement. The starting submission establishes the first contributor for consecutive-player checks.
+
+Accepting the starting submission is one transaction that creates the attempt, records the accepted submission, establishes the first contributor, advances the compiled-sequence position, transitions the round to `Counting`, and creates the ordered canonical-message and original-deletion work. The starting submission is canonicalized in the same way as every later accepted submission.
 
 An active attempt breaks when an eligible player submits:
 
@@ -148,7 +152,7 @@ The failure announcement never reveals the expected value, hidden sequence rules
 
 Eligible numeric submissions are processed through one serialized queue for the configured channel. Discord arrival order determines evaluation order.
 
-For every eligible numeric submission during `Counting`, including the submission that breaks the attempt:
+For every accepted starting submission and every eligible numeric submission evaluated during `Counting`, including the submission that breaks the attempt:
 
 1. Record the original message ID, author ID, original digit string, normalized safe value when available, and decision transactionally.
 2. Create a bot-authored canonical message such as `@Player -> 42`. An out-of-range digit string is preserved verbatim in the canonical breaking submission because it has no supported normalized value.
@@ -159,7 +163,13 @@ Ordinary players cannot edit bot-authored canonical messages. Discord administra
 
 The failure announcement identifies the submitting player, says the attempt was reset, states that failed-attempt participation and bonus points were discarded while penalties remain, and reminds players of the original starting number.
 
-Persistence uses an outbox-style record for canonical messages, deletions, bonus announcements, reset announcements, completion announcements, and leaderboard publication. Duplicate Discord events are ignored by original message ID. Incomplete work is retried after reconnect or restart without applying the submission twice.
+Persistence uses an outbox-style record for canonical messages, deletions, bonus announcements, reset announcements, completion announcements, cancellation announcements, and leaderboard publication. Duplicate Discord events are ignored by original message ID. Incomplete work is retried after reconnect or restart without applying the submission twice.
+
+Each channel outbox operation has a stable operation ID, a monotonically increasing sequence number, an optional predecessor, a fully snapshotted payload, retry state, and the resulting Discord message ID when applicable. A single dispatcher executes operations in sequence and does not start an operation until its predecessor has succeeded or an administrator has explicitly resolved the predecessor. For one submission, required delivery order is canonical message, original-message deletion, and then any bonus, reset, completion, cancellation, or leaderboard output caused by that decision.
+
+Submission decisions, state transitions, score-ledger changes, audit events, and their required ordered outbox operations commit atomically in SQLite before Discord is called. No database transaction remains open during a Discord API request. SQLite state is therefore exactly-once by original message ID, while Discord effects use idempotent retry and reconciliation rather than claiming a distributed transaction.
+
+Message-creation operations use a deterministic Discord nonce derived from the stable outbox operation ID and request nonce enforcement. After an ambiguous response, the dispatcher reconciles recent bot-authored channel history by nonce before retrying. It retries automatically only while Discord can still enforce nonce uniqueness. If delivery remains ambiguous outside that window, the operation enters an administrator-visible review state rather than risking a blind duplicate. Deleting an already absent message is treated as successful.
 
 If required persistence fails, the game pauses numeric processing. If canonical delivery or deletion fails after persistence, the decision remains recorded and the pending Discord work is retried and surfaced in the administration interface.
 
@@ -212,7 +222,7 @@ An active attempt always contains the accepted starting number, so its progress 
 
 Each player is charged only their single worst severity for the round. If a player's recorded severity changes from `-2` to `-5`, a new ledger entry charges only the additional `-3`. Later breaks with severity `-5` or less severe create audit records but no score change. The cap resets at the start of each new round.
 
-Penalty deltas are committed immediately and remain if the round is stopped or cancelled. This prevents cancellation from erasing the consequence of a broken count. A player's maximum loss from penalties is five points per round.
+Penalty deltas are committed immediately and remain while a round is paused and after it is cancelled. This prevents either administrative action from erasing the consequence of a broken count. A player's maximum loss from penalties is five points per round.
 
 ## Seasonal Leaderboard
 
@@ -220,7 +230,9 @@ The score ledger is append-only. Current totals are derived from ledger entries 
 
 The public `/leaderboard` slash command displays the current season's standings. Completing a round automatically posts the updated leaderboard in the game channel. Player identity is keyed by immutable Discord user ID; the interface may display the latest known server display name without using it as identity.
 
-An administrator may reset the leaderboard only when no round is active. Resetting archives the current season and opens a new season with zero totals. Historical seasons and their round breakdowns remain available in the administration interface.
+An administrator may reset the leaderboard only when no round is active and the preceding round is operationally settled. A completed or cancelled round remains unsettled while any required terminal announcement or leaderboard-publication operation is pending or under review. Activating another round and resetting the season are blocked until that terminal chain succeeds or an administrator explicitly abandons it with confirmation and an audit record. Terminal announcement and leaderboard payloads are snapshotted in the transaction that creates them and are never recalculated during retry.
+
+Resetting archives the current season and opens a new season with zero totals. Historical seasons and their round breakdowns remain available in the administration interface.
 
 ## Manual Round Game Bans
 
@@ -232,7 +244,7 @@ Administrators may ban or unban a Discord member from the current round through 
 - A banned submission cannot advance or break the count and causes no score change.
 - A failed deletion is still ignored by the engine and appears as a private operational warning.
 - Applying or removing a ban does not change the current attempt.
-- All round bans expire when the round ends or a new round is activated.
+- Pausing preserves round bans. All round bans expire when the round completes or is cancelled.
 
 The bot requires `Manage Messages` in the game channel to enforce canonicalization and bans.
 
@@ -246,7 +258,7 @@ The browser interface provides:
 - Reusable round-template management
 - Structured sequence, skip-rule, and stackable bonus-rule editing
 - Private compiled-sequence and scoring preview
-- Round activation, stop, and administrative cancellation
+- Round activation, pause, resume, and administrative cancellation
 - Live round-scoped ban and unban controls
 - Current leaderboard and archived season breakdowns
 - Season reset with explicit confirmation
@@ -254,7 +266,7 @@ The browser interface provides:
 
 The server binds to a configured address and is intended for a private network. Loopback-only HTTP is permitted for development. Private-network deployment uses HTTPS through a local reverse proxy.
 
-Authentication uses an administrator password hash and independent session secret supplied outside the repository. Sessions use HTTP-only same-site cookies, expiration, login throttling, and CSRF protection. The bot token, password material, and session secret are never stored in SQLite or returned to browser code. Hidden rule data and sequence previews are never sent to Discord.
+Authentication uses an administrator password hash and independent session secret supplied outside the repository. Sessions use HTTP-only same-site cookies, expiration, login throttling, and CSRF protection. Production session cookies are always `Secure`, use a narrowly scoped path, and honor HTTPS only through explicitly trusted reverse-proxy configuration. A non-`Secure` cookie is permitted only for loopback development. The bot token, password material, and session secret are never stored in SQLite or returned to browser code. Hidden rule data and sequence previews are never sent to Discord.
 
 ## Persistence Model
 
@@ -270,7 +282,8 @@ The relational model includes:
 - `round_player_penalties` containing the worst severity per player
 - `round_bans`
 - `score_ledger` containing typed signed score deltas
-- `discord_outbox` containing idempotent pending delivery and deletion work
+- `discord_outbox` containing ordered, dependent, idempotent delivery and deletion work, snapshotted payloads, nonces, retry state, and resulting Discord message IDs
+- a durable channel-reconciliation checkpoint containing the greatest Discord message ID fully examined in the configured game channel
 - `audit_events`
 - `admin_sessions`
 
@@ -291,7 +304,11 @@ Missing capabilities block activation and are shown in the administration interf
 
 ## Error Handling and Recovery
 
-- A lost Discord connection pauses incoming play and resumes through discord.js reconnection behavior.
+- A lost Discord connection places numeric processing in `Reconciling` mode after connectivity returns. Reconciliation and live Gateway processing use the same serialized channel executor and never evaluate submissions concurrently.
+- Reconciliation reads channel history after the durable channel checkpoint, establishes a high-water message ID, and processes messages through the normal parser and game engine in chronological Discord message-ID order.
+- Normal reconciliation evaluation continues until it reaches the high-water mark, the round completes, or the first penalty-causing submission breaks the attempt. Accepted historical submissions receive the same canonical replacement and original deletion as live submissions. Cleanup and checkpoint advancement may continue after normal evaluation stops.
+- When reconciliation encounters a penalty-causing submission, it commits the normal penalty and reset. Every later numeric message through the reconciliation high-water mark is recorded as invalidated and deleted without evaluation, canonical replacement, or score change. The reset announcement follows those ordered deletions.
+- Messages arriving during reconciliation remain behind the reconciliation work in the serialized executor. Duplicate delivery through history and the Gateway is ignored by Discord message ID. The durable checkpoint advances only after each message's disposition and any required outbox work have committed.
 - A database write failure pauses game processing and exposes an administrator-visible critical error.
 - A Discord API failure remains in the outbox with bounded retry and visible failure state.
 - Duplicate and replayed message events are idempotent by Discord message ID.
@@ -317,9 +334,15 @@ Missing capabilities block activation and are shown in the administration interf
 - SQLite transactions, constraints, migrations, and ledger totals
 - Crash and restart recovery at each outbox stage
 - Discord event duplication and serialized arrival ordering
+- Disconnect reconciliation through successful completion and through a penalty-causing submission
+- Invalidation of post-break numeric messages within the reconciliation window
 - Canonical replacement for valid and breaking submissions
+- Canonical replacement of the accepted starting submission
+- Strict outbox dependency ordering, nonce reconciliation, ambiguous-delivery review, and restart at each operation boundary
 - Deletion failures for originals and banned-player messages
 - Successful completion, leaderboard publication, season archival, and reset guards
+- Pause, resume, cancellation, retained penalties, discarded provisional rewards, and round-ban expiry
+- Blocking round activation and season reset while terminal Discord work remains unsettled
 - Authentication, session expiration, CSRF protection, throttling, and authorization
 
 ### Manual verification
