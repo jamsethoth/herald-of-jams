@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-20-herald-of-jams-counting-game-design.md`
 
+> **Revision:** Announcement configuration, one-value rounds, and cancellation penalty semantics in this original plan are superseded by `docs/superpowers/plans/2026-09-21-configurable-announcements-and-cancellation.md`. Completed task history remains unchanged.
+
 ## Global Constraints
 
 - One Discord server, one configured game channel, and at most one active round.
@@ -478,7 +480,7 @@ Use `database.transaction(...).immediate()` for every command. Persist the full 
 
 - [ ] **Step 4: Write failing lifecycle and scoring integration tests**
 
-Test pause/resume preservation, cancellation discarding provisional data while retaining penalties, completion appending participation and bonus ledger entries, bans, worst-penalty deltas, one active round, and season reset rejection while a round is active.
+Test pause/resume preservation, cancellation discarding provisional data and removing that round's penalties, completion appending participation and bonus ledger entries, bans, worst-penalty deltas, one active round, and season reset rejection while a round is active.
 
 Also test both guards:
 
@@ -739,7 +741,7 @@ Represent predicates as repeatable form rows with explicit type and fields. Pars
 
 - [ ] **Step 3: Write failing lifecycle route tests**
 
-Test activation permission failures, one-active-round guard, pause from waiting/counting, resume to preserved state, cancellation confirmation, discarded provisional rewards, retained penalties, ban expiry, and terminal operational-settlement blocking.
+Test activation permission failures, one-active-round guard, pause from waiting/counting, resume to preserved state, cancellation confirmation, discarded provisional rewards, removal of cancelled-round penalties, ban expiry, and terminal operational-settlement blocking.
 
 - [ ] **Step 4: Implement dashboard and lifecycle routes**
 

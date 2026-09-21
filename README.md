@@ -32,6 +32,14 @@ corepack.cmd pnpm start
 
 The administration interface defaults to `127.0.0.1:3000`. Do not expose it directly to the public internet. See [docs/operations.md](docs/operations.md) for Discord permissions, reverse-proxy requirements, backup, recovery, and shutdown procedures.
 
+## Round and announcement configuration
+
+Use **Announcement defaults** in the administration interface to edit the global bonus, reset, completion, and cancellation messages. A round template may override any of them; a blank override inherits the global value that exists when the round is activated. Activation freezes the effective wording, so later edits affect only future rounds.
+
+Bonus messages allow `{player}` and `{bonusPoints}`. Reset messages allow `{start}`. Completion and cancellation messages do not allow placeholders. Unknown placeholders and messages longer than 1,900 characters are rejected.
+
+A template may set the target equal to the start for a one-submission smoke test. Cancelling any round discards its provisional rewards and removes every penalty belonging to that round.
+
 ## Architecture
 
 - Pure TypeScript compiles rounds, parses numbers, evaluates submissions, and calculates exact scores.
