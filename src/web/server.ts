@@ -18,9 +18,14 @@ import type { GameService } from "../application/game-service.js";
 import type { SerialExecutor } from "../application/serial-executor.js";
 import type { AppConfig } from "../config.js";
 import type { AdminRepository } from "../db/admin-repository.js";
+import { GameRepository } from "../db/game-repository.js";
+import type { OutboxRepository } from "../db/outbox-repository.js";
 import type { PermissionReport } from "../discord/permissions.js";
 import { SqliteSessionStore, verifyPassword } from "./auth.js";
 import { registerDashboardRoute } from "./routes/dashboard.js";
+import { registerLeaderboardRoutes } from "./routes/leaderboard.js";
+import { registerModerationRoutes } from "./routes/moderation.js";
+import { registerOperationRoutes } from "./routes/operations.js";
 import { registerRoundRoutes } from "./routes/rounds.js";
 import { registerTemplateRoutes } from "./routes/templates.js";
 
@@ -35,6 +40,7 @@ interface AdminServerDependencies {
   adminRepository?: AdminRepository;
   gameService?: GameService;
   executor?: SerialExecutor;
+  outboxRepository?: OutboxRepository;
   permissionReport?: () => PermissionReport;
   discordConnected?: () => boolean;
 }
@@ -226,6 +232,32 @@ export function buildAdminServer(dependencies: AdminServerDependencies) {
       requireAuthenticated,
       csrfHook,
     );
+    registerModerationRoutes(
+      app,
+      database,
+      dependencies.gameService,
+      dependencies.executor,
+      requireAuthenticated,
+      csrfHook,
+    );
+    registerLeaderboardRoutes(
+      app,
+      database,
+      new GameRepository(database),
+      dependencies.gameService,
+      dependencies.executor,
+      requireAuthenticated,
+      csrfHook,
+    );
+    if (dependencies.outboxRepository !== undefined) {
+      registerOperationRoutes(
+        app,
+        database,
+        dependencies.outboxRepository,
+        requireAuthenticated,
+        csrfHook,
+      );
+    }
   } else {
     app.get("/admin", { preHandler: requireAuthenticated }, async (_request, reply) => {
       return reply.type("text/html").send(

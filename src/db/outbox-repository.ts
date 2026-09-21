@@ -179,6 +179,24 @@ export class OutboxRepository {
       .run(error.slice(0, 500), id);
   }
 
+  retry(id: string, actorId: string): void {
+    this.database
+      .transaction(() => {
+        const operation = this.get(id);
+        if (operation === undefined || operation.status !== "retry_wait") {
+          throw new Error("only definite retry-wait failures may be retried");
+        }
+        this.database
+          .prepare(
+            `UPDATE discord_outbox
+             SET status = 'pending', next_attempt_at = NULL WHERE id = ?`,
+          )
+          .run(id);
+        this.audit("outbox_retry_requested", operation, actorId, {});
+      })
+      .immediate();
+  }
+
   markDelivered(id: string, discordMessageId: string, actorId: string): void {
     this.database
       .transaction(() => {

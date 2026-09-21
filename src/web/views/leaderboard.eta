@@ -1,0 +1,10 @@
+<main>
+  <h1>Current leaderboard</h1>
+  <ol><% it.entries.forEach(function(entry) { %><li><%= entry.displayName %> (<%= entry.playerId %>): <%= entry.total %></li><% }) %></ol>
+  <h2>Seasons</h2>
+  <ul><% it.seasons.forEach(function(season) { %><li><a href="/admin/seasons/<%= season.id %>"><%= season.id %></a></li><% }) %></ul>
+  <form method="post" action="/admin/seasons/reset">
+    <input type="hidden" name="_csrf" value="<%= it.csrf %>">
+    <label>Type RESET <input name="confirmation"></label><button>Reset season</button>
+  </form>
+</main>

@@ -1,0 +1,4 @@
+<main>
+  <h1>Season <%= it.seasonId %></h1>
+  <table><tbody><% it.entries.forEach(function(entry) { %><tr><td><%= entry.round_id %></td><td><%= entry.latest_display_name %></td><td><%= entry.player_id %></td><td><%= entry.entry_type %></td><td><%= entry.delta %></td></tr><% }) %></tbody></table>
+</main>
