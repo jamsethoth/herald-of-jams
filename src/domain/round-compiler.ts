@@ -1,6 +1,7 @@
 import { matchesPredicate } from "./predicates.js";
 import {
   DEFAULT_ANNOUNCEMENTS,
+  renderAnnouncement,
   resolveAnnouncements,
 } from "./announcement-templates.js";
 import type {
@@ -113,6 +114,8 @@ export function compileRound(
   }
 
   const copiedInput = copyInput(input);
+  const announcements = resolveAnnouncements(defaults, copiedInput.announcements);
+  renderAnnouncement("start", announcements.start, { start: copiedInput.start });
   if (
     copiedInput.target !== copiedInput.start &&
     copiedInput.skipRules.some((rule) => matchesPredicate(copiedInput.target, rule))
@@ -143,6 +146,6 @@ export function compileRound(
   return Object.freeze({
     input: copiedInput,
     entries: Object.freeze(entries),
-    announcements: resolveAnnouncements(defaults, copiedInput.announcements),
+    announcements,
   });
 }

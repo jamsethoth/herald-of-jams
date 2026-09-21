@@ -183,6 +183,22 @@ describe("round administration routes", () => {
     expect(preview.body).toContain("Template complete");
     expect(preview.body).toContain(DEFAULT_ANNOUNCEMENTS.reset);
 
+    const oversizedStart = await app.inject({
+      method: "POST",
+      url: "/admin/templates/preview",
+      headers: { cookie },
+      payload: {
+        ...roundTemplate({
+          start: Number.MAX_SAFE_INTEGER,
+          target: Number.MAX_SAFE_INTEGER,
+        }),
+        startAnnouncement: "{start}".repeat(271),
+        _csrf: csrf,
+      },
+    });
+    expect(oversizedStart.statusCode).toBe(400);
+    expect(oversizedStart.body).toMatch(/2000 rendered characters/i);
+
     const created = await app.inject({
       method: "POST",
       url: "/admin/templates",

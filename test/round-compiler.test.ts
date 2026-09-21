@@ -91,6 +91,18 @@ describe("compileRound", () => {
     expect(Object.isFrozen(compiled.announcements)).toBe(true);
   });
 
+  it("rejects a start announcement that exceeds Discord's limit after rendering", () => {
+    expect(() =>
+      compileRound(
+        template({
+          start: Number.MAX_SAFE_INTEGER,
+          target: Number.MAX_SAFE_INTEGER,
+          announcements: { start: "{start}".repeat(271) },
+        }),
+      ),
+    ).toThrow(/2000 rendered characters/i);
+  });
+
   it.each([
     ["unsafe start", { start: Number.MAX_SAFE_INTEGER + 1 }],
     ["negative start", { start: -1 }],
