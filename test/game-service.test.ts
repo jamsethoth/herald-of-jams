@@ -290,6 +290,31 @@ describe("GameService", () => {
     expect(outboxContents(context, "completion_announcement")).toEqual(["Custom complete"]);
   });
 
+  it("resolves an inherited global announcement when the round is activated", async () => {
+    const templateId = context.adminRepository.createTemplate(
+      roundTemplate({ start: 1, target: 1 }),
+    );
+    context.adminRepository.updateAnnouncementDefaults(
+      { ...DEFAULT_ANNOUNCEMENTS, completion: "Current global completion" },
+      "admin",
+    );
+
+    await service.activateRound(templateId);
+    await service.processMessage(message("100", "alice", "1"));
+
+    const compiled = JSON.parse(
+      (
+        context.database.prepare("SELECT compiled_config_json FROM rounds").get() as {
+          compiled_config_json: string;
+        }
+      ).compiled_config_json,
+    ) as { announcements: { completion: string } };
+    expect(compiled.announcements.completion).toBe("Current global completion");
+    expect(outboxContents(context, "completion_announcement")).toEqual([
+      "Current global completion",
+    ]);
+  });
+
   it("falls back to built-in reset wording for a pre-revision compiled round", async () => {
     await activate();
     const row = context.database.prepare("SELECT compiled_config_json FROM rounds").get() as {
@@ -335,6 +360,42 @@ describe("GameService", () => {
       discardedPenaltyEntries: 1,
       discardedPenaltyPoints: 2,
     });
+  });
+
+  it("rolls back every cancellation change when terminal output cannot be queued", async () => {
+    await activate();
+    await service.processMessage(message("100", "alice", "1"));
+    await service.processMessage(message("101", "alice", "2"));
+    await service.processMessage(message("102", "bob", "1"));
+    await service.banPlayer("charlie", "Charlie", "admin");
+    context.database.exec(`
+      CREATE TRIGGER fail_cancellation_outbox BEFORE INSERT ON discord_outbox
+      WHEN NEW.operation_type = 'cancellation_announcement'
+      BEGIN SELECT RAISE(ABORT, 'forced cancellation outbox failure'); END;
+    `);
+
+    await expect(service.cancelRound("admin")).rejects.toThrow(
+      /forced cancellation outbox failure/,
+    );
+
+    expect(context.database.prepare("SELECT state FROM rounds").get()).toEqual({ state: "counting" });
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM score_ledger WHERE entry_type = 'penalty'"))
+      .toBe(1);
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM round_player_penalties")).toBe(1);
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM round_bans")).toBe(1);
+    expect(scalar(context, "SELECT COUNT(*) AS value FROM attempt_contributions")).toBe(1);
+    expect(
+      scalar(
+        context,
+        "SELECT COUNT(*) AS value FROM discord_outbox WHERE operation_type = 'cancellation_announcement'",
+      ),
+    ).toBe(0);
+    expect(
+      scalar(
+        context,
+        "SELECT COUNT(*) AS value FROM audit_events WHERE event_type = 'round_cancelled'",
+      ),
+    ).toBe(0);
   });
 
   it("enforces one active round and blocks season reset while active", async () => {
