@@ -1,7 +1,7 @@
 # Herald of Jams Counting Game Design
 
 **Date:** 2026-09-20
-**Status:** Approved design awaiting implementation planning
+**Status:** Approved base design; announcement and cancellation revision awaiting implementation planning
 
 ## Purpose
 
@@ -12,6 +12,7 @@ The first release is for one Discord server, one configured game channel, and on
 ## Goals
 
 - Let an administrator privately construct reusable rounds from safe structured rules.
+- Let an administrator edit global announcement defaults and override them per round template.
 - Keep sequence, skip, and bonus rules hidden from players.
 - Compile each round into a deterministic, immutable sequence before activation.
 - Preserve a clear Discord-visible record of accepted and count-breaking numeric submissions.
@@ -62,10 +63,11 @@ A reusable round template contains:
 - Private name and optional administrator notes
 - Discord game channel
 - Non-negative starting number
-- Greater target number
 - Positive integer step size
+- Target number greater than or equal to the starting number
 - Zero or more skip rules
 - Zero or more bonus rules
+- Optional per-template overrides for bonus, reset, completion, and cancellation announcements
 
 The first release supports these predicates for skip and bonus rules:
 
@@ -82,7 +84,7 @@ The compiler generates an ordered list before a round may be activated:
 
 1. Include the configured starting number.
 2. Add the configured step to produce the next candidate.
-3. Omit candidates matching any skip predicate.
+3. Omit candidates after the starting value when they match any skip predicate.
 4. Include each remaining candidate in ascending order.
 5. Stop only when the configured target is included.
 
@@ -90,15 +92,39 @@ The compiler also records every bonus rule matched by every included value. It r
 
 - Start, step, or target is not a non-negative JavaScript safe integer.
 - Step is zero or negative.
-- Target is not greater than start.
+- Target is less than start.
 - A divisor is zero or invalid.
 - A range has invalid or reversed bounds.
-- The target is skipped.
+- The target is skipped when it is distinct from the always-included starting value.
 - Stepping passes the target without reaching it exactly.
 - Generation would exceed 100,000 included entries or the corresponding bounded candidate-iteration limit.
 - Any generated result is repeated, non-integer, decreasing, or outside the safe-integer range.
 
 The private preview shows the complete generated sequence, total required submissions, bonus values, number of bonus rules matching each value, and progress thresholds used for penalties. Activating a round copies this output into an immutable compiled-round record. Later edits to the reusable template cannot change the active round.
+
+A template whose target equals its starting number compiles to exactly one required submission. Accepting that submission starts and completes the attempt in the same transaction, making single-player completion testing possible without weakening the consecutive-player rule for longer rounds.
+
+## Announcement Configuration
+
+The administration interface provides editable global defaults for four Discord announcements:
+
+- Provisional bonus earned
+- Attempt reset after a break
+- Round completed
+- Round cancelled
+
+Each reusable round template has an optional override for each announcement. A blank override inherits the current global default. Preview shows the effective announcement templates that activation would use. Activation resolves global defaults and template overrides into the immutable compiled-round snapshot, so edits made after activation affect only future rounds.
+
+Announcement templates support a small context-specific placeholder allowlist:
+
+- Bonus: `{player}` and `{bonusPoints}`
+- Reset: `{start}`
+- Completion: no dynamic placeholders
+- Cancellation: no dynamic placeholders
+
+Unknown or context-inappropriate placeholders are rejected. Global defaults must be non-empty; per-template overrides may be blank only to request inheritance. Stored templates are length-bounded so every rendered Discord message remains within Discord's 2,000-character limit. Rendering performs literal placeholder substitution only; announcement configuration cannot execute code, access hidden state, or introduce arbitrary expressions.
+
+The built-in initial defaults preserve the existing bonus, reset, and completion wording. The cancellation default states that all provisional rewards and round penalties were discarded. Existing templates inherit global defaults automatically. Existing active compiled rounds that predate announcement snapshots use the built-in defaults as a compatibility fallback.
 
 ## Submission Parsing
 
@@ -133,7 +159,7 @@ WaitingForStart | Counting | Paused -> Cancelled
 - **Paused:** A reversible administrative state that preserves the prior `WaitingForStart` or `Counting` state, active attempt, expected value, provisional rewards, penalties, and bans. Resuming returns to the preserved state. Numeric-only messages received while paused are deleted without evaluation, canonical replacement, or score change.
 - **Broken:** A transient recorded outcome that closes the failed attempt, announces the failure, and returns the round to `WaitingForStart`.
 - **Completed:** A terminal successful outcome. The target was accepted, successful-attempt rewards were committed, and required completion and leaderboard-publication work was created. Discord publication determines operational settlement but does not delay the state transition.
-- **Cancelled:** A terminal administrative outcome. Cancellation closes any active attempt, discards its provisional participation and bonus data, preserves already committed penalties, expires round bans, and creates required cancellation-announcement work. A cancelled round cannot be resumed.
+- **Cancelled:** A terminal administrative outcome. Cancellation closes any active attempt, discards its provisional participation and bonus data, removes every penalty charge and worst-severity record belonging to the round, expires round bans, and creates required cancellation-announcement work. A cancelled round cannot be resumed.
 
 While waiting for the starting number, other numeric-only messages are deleted and ignored. They cause no score change and receive no canonical replacement. The starting submission establishes the first contributor for consecutive-player checks.
 
@@ -161,7 +187,7 @@ For every accepted starting submission and every eligible numeric submission eva
 
 Ordinary players cannot edit bot-authored canonical messages. Discord administrators with message-management permissions can still delete them. Deleting a canonical message does not rewrite game history; it creates a private audit event.
 
-The failure announcement identifies the submitting player, says the attempt was reset, states that failed-attempt participation and bonus points were discarded while penalties remain, and reminds players of the original starting number.
+The effective reset announcement is snapshotted at activation. The built-in default says the attempt was reset, states that failed-attempt participation and bonus points were discarded while penalties remain, and reminds players of the original starting number. It never exposes hidden rules or the expected next value.
 
 Persistence uses an outbox-style record for canonical messages, deletions, bonus announcements, reset announcements, completion announcements, cancellation announcements, and leaderboard publication. Duplicate Discord events are ignored by original message ID. Incomplete work is retried after reconnect or restart without applying the submission twice.
 
@@ -175,7 +201,7 @@ If required persistence fails, the game pauses numeric processing. If canonical 
 
 ## Hidden Bonuses
 
-When an accepted value matches one or more bonus rules, the bot announces the submitting player and total provisional bonus, but never explains why the value qualified.
+When an accepted value matches one or more bonus rules, the bot renders the effective bonus announcement with the submitting player and total provisional bonus, but never exposes why the value qualified.
 
 Each matching rule contributes one point. Overlapping conditions therefore stack. Bonus awards from an attempt are provisional until that attempt reaches the target. When an attempt breaks, all of its provisional participation and bonus data is discarded, and the reset announcement makes that explicit.
 
@@ -222,11 +248,11 @@ An active attempt always contains the accepted starting number, so its progress 
 
 Each player is charged only their single worst severity for the round. If a player's recorded severity changes from `-2` to `-5`, a new ledger entry charges only the additional `-3`. Later breaks with severity `-5` or less severe create audit records but no score change. The cap resets at the start of each new round.
 
-Penalty deltas are committed immediately and remain while a round is paused and after it is cancelled. This prevents either administrative action from erasing the consequence of a broken count. A player's maximum loss from penalties is five points per round.
+Penalty deltas are committed immediately and remain while a round is active or paused. Cancelling the entire round atomically deletes all of that round's penalty ledger entries and worst-severity records, returning every affected player's seasonal total to the value it would have had without the cancelled round. The cancellation audit records the number and total value of discarded penalty entries without retaining a score charge. A player's maximum loss from penalties is five points per non-cancelled round.
 
 ## Seasonal Leaderboard
 
-The score ledger is append-only. Current totals are derived from ledger entries rather than being the only stored representation.
+Current totals are derived from score-ledger entries rather than being the only stored representation. Normal scoring is append-only; administrative round cancellation is the one explicit exception and removes only penalty entries owned by the cancelled round in the same transaction as the terminal state change.
 
 The public `/leaderboard` slash command displays the current season's standings. Completing a round automatically posts the updated leaderboard in the game channel. Player identity is keyed by immutable Discord user ID; the interface may display the latest known server display name without using it as identity.
 
@@ -256,6 +282,7 @@ The browser interface provides:
 - Discord connection and permission status
 - Current round and attempt status
 - Reusable round-template management
+- Editable global announcement defaults and per-template announcement overrides
 - Structured sequence, skip-rule, and stackable bonus-rule editing
 - Private compiled-sequence and scoring preview
 - Round activation, pause, resume, and administrative cancellation
@@ -275,6 +302,7 @@ The relational model includes:
 - `seasons` and season lifecycle timestamps
 - `players` keyed by Discord user ID
 - `round_templates` and structured rule definitions
+- a singleton typed announcement-default record and nullable typed announcement overrides on `round_templates`
 - `rounds` containing immutable compiled configuration and lifecycle state
 - `compiled_entries` containing ordered values and matched bonus-rule identifiers
 - `attempts` containing lifecycle and reset outcome
@@ -288,6 +316,8 @@ The relational model includes:
 - `admin_sessions`
 
 State transitions, score-ledger mutations, audit events, and required outbox entries are created in the same SQLite transaction. Foreign keys and uniqueness constraints enforce ownership and Discord-event idempotency.
+
+The schema migration for this revision rebuilds the round-template target constraint to allow `target = start`, adds typed global announcement defaults and nullable template overrides, and removes penalty ledger and worst-severity rows for rounds that were already cancelled under the earlier rule. The migration runs atomically, performs a foreign-key integrity check, and leaves completed and active round scoring untouched.
 
 ## Discord Permissions and Intents
 
@@ -323,6 +353,8 @@ Missing capabilities block activation and are shown in the administration interf
 - Strict numeric parsing and normalization
 - Every predicate and overlapping bonus match
 - Sequence generation, reachability, boundaries, and safety caps
+- Single-value sequence compilation and completion
+- Announcement placeholder allowlists, inheritance, snapshotting, and rendered-length bounds
 - Every state-machine transition
 - Same-player, duplicate, skipped, unexpected, and out-of-range breaks
 - Progress boundaries and worst-penalty delta behavior
@@ -341,7 +373,9 @@ Missing capabilities block activation and are shown in the administration interf
 - Strict outbox dependency ordering, nonce reconciliation, ambiguous-delivery review, and restart at each operation boundary
 - Deletion failures for originals and banned-player messages
 - Successful completion, leaderboard publication, season archival, and reset guards
-- Pause, resume, cancellation, retained penalties, discarded provisional rewards, and round-ban expiry
+- Pause and resume with retained penalties; cancellation with removed round penalties, discarded provisional rewards, and round-ban expiry
+- Migration of existing cancelled-round penalties and existing template inheritance
+- Global announcement editing, per-template overrides, preview, CSRF protection, and immutable active-round wording
 - Blocking round activation and season reset while terminal Discord work remains unsettled
 - Authentication, session expiration, CSRF protection, throttling, and authorization
 
