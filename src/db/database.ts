@@ -6,6 +6,7 @@ import Database from "better-sqlite3";
 interface Migration {
   version: number;
   sql: string;
+  requiresForeignKeysOff: boolean;
 }
 
 function loadMigrations(): readonly Migration[] {
@@ -19,10 +20,21 @@ function loadMigrations(): readonly Migration[] {
       return {
         version: Number(match[1]),
         sql: readFileSync(resolve(directory, filename), "utf8"),
+        requiresForeignKeysOff: false,
       };
     })
     .filter((migration): migration is Migration => migration !== undefined)
+    .map((migration) => ({
+      ...migration,
+      requiresForeignKeysOff: migration.sql.startsWith("-- requires-foreign-keys-off"),
+    }))
     .sort((left, right) => left.version - right.version);
+}
+
+function recordVersion(database: Database.Database, version: number): void {
+  database
+    .prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
+    .run(version, new Date().toISOString());
 }
 
 function appliedVersions(database: Database.Database): readonly number[] {
@@ -65,11 +77,27 @@ export function migrate(database: Database.Database): void {
     if (applied.has(migration.version)) {
       continue;
     }
+    if (migration.requiresForeignKeysOff) {
+      database.pragma("foreign_keys = OFF");
+      try {
+        database
+          .transaction(() => {
+            database.exec(migration.sql);
+            const violations = database.pragma("foreign_key_check") as unknown[];
+            if (violations.length > 0) {
+              throw new Error("migration violates foreign keys");
+            }
+            recordVersion(database, migration.version);
+          })
+          .immediate();
+      } finally {
+        database.pragma("foreign_keys = ON");
+      }
+      continue;
+    }
     database.transaction(() => {
       database.exec(migration.sql);
-      database
-        .prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
-        .run(migration.version, new Date().toISOString());
+      recordVersion(database, migration.version);
     })();
   }
 }

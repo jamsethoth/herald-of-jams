@@ -1,11 +1,12 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import type Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { migrate, openDatabase } from "../src/db/database.js";
+import { DEFAULT_ANNOUNCEMENTS } from "../src/domain/announcement-templates.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -78,6 +79,7 @@ describe("database migrations", () => {
     );
     expect(database.prepare("SELECT version FROM schema_migrations").all()).toEqual([
       { version: 1 },
+      { version: 2 },
     ]);
 
     database.close();
@@ -174,6 +176,117 @@ describe("database migrations", () => {
       .run(999, "future");
 
     expect(() => migrate(database)).toThrow(/future schema version 999/i);
+    database.close();
+  });
+
+  it("upgrades version 1 while preserving foreign keys and non-cancelled penalties", () => {
+    const { database } = temporaryDatabase();
+    const initialSql = readFileSync(
+      resolve(process.cwd(), "src", "db", "migrations", "001-initial.sql"),
+      "utf8",
+    );
+    database.exec(initialSql);
+    database
+      .prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (1, 'now')")
+      .run();
+    database.prepare("INSERT INTO seasons (id, started_at) VALUES ('season', 'now')").run();
+    database
+      .prepare(
+        "INSERT INTO players (discord_user_id, latest_display_name, updated_at) VALUES ('player', 'Player', 'now')",
+      )
+      .run();
+    database
+      .prepare(
+        `INSERT INTO round_templates
+          (id, private_name, channel_id, start_value, target_value, step_value, rules_json,
+           created_at, updated_at)
+         VALUES ('template', 'Template', 'channel', 1, 2, 1, '{}', 'now', 'now')`,
+      )
+      .run();
+
+    const insertRound = database.prepare(
+      `INSERT INTO rounds
+        (id, template_id, season_id, channel_id, state, compiled_config_json, activated_at,
+         completed_at, cancelled_at)
+       VALUES (?, 'template', 'season', 'channel', ?, '{}', 'now', ?, ?)`,
+    );
+    insertRound.run("active", "counting", null, null);
+    insertRound.run("completed", "completed", "now", null);
+    insertRound.run("cancelled", "cancelled", null, "now");
+
+    const insertPenalty = database.prepare(
+      `INSERT INTO score_ledger
+        (id, season_id, round_id, player_id, entry_type, delta, source_key, created_at)
+       VALUES (?, 'season', ?, 'player', 'penalty', -2, ?, 'now')`,
+    );
+    for (const roundId of ["active", "completed", "cancelled"]) {
+      insertPenalty.run(`ledger-${roundId}`, roundId, `penalty-${roundId}`);
+    }
+    database
+      .prepare(
+        `INSERT INTO round_player_penalties (round_id, player_id, worst_severity)
+         VALUES ('cancelled', 'player', -2)`,
+      )
+      .run();
+
+    migrate(database);
+
+    expect(database.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
+      { version: 1 },
+      { version: 2 },
+    ]);
+    expect(database.pragma("foreign_key_check")).toEqual([]);
+    expect(
+      database.prepare("SELECT COUNT(*) AS count FROM score_ledger WHERE round_id = 'cancelled'").get(),
+    ).toEqual({ count: 0 });
+    expect(
+      database
+        .prepare("SELECT COUNT(*) AS count FROM round_player_penalties WHERE round_id = 'cancelled'")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(database.prepare("SELECT round_id FROM score_ledger ORDER BY round_id").all()).toEqual([
+      { round_id: "active" },
+      { round_id: "completed" },
+    ]);
+    expect(() =>
+      database
+        .prepare(
+          `INSERT INTO round_templates
+            (id, private_name, channel_id, start_value, target_value, step_value, rules_json,
+             created_at, updated_at)
+           VALUES ('equal', 'Equal', 'channel', 7, 7, 1, '{}', 'now', 'now')`,
+        )
+        .run(),
+    ).not.toThrow();
+    expect(
+      database
+        .prepare(
+          `SELECT bonus_announcement, reset_announcement, completion_announcement,
+                  cancellation_announcement
+           FROM announcement_settings WHERE id = 1`,
+        )
+        .get(),
+    ).toEqual({
+      bonus_announcement: DEFAULT_ANNOUNCEMENTS.bonus,
+      reset_announcement: DEFAULT_ANNOUNCEMENTS.reset,
+      completion_announcement: DEFAULT_ANNOUNCEMENTS.completion,
+      cancellation_announcement: DEFAULT_ANNOUNCEMENTS.cancellation,
+    });
+    expect(
+      database
+        .prepare(
+          `SELECT bonus_announcement_override, reset_announcement_override,
+                  completion_announcement_override, cancellation_announcement_override
+           FROM round_templates WHERE id = 'template'`,
+        )
+        .get(),
+    ).toEqual({
+      bonus_announcement_override: null,
+      reset_announcement_override: null,
+      completion_announcement_override: null,
+      cancellation_announcement_override: null,
+    });
+
     database.close();
   });
 });
