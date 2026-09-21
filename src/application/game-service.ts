@@ -184,7 +184,10 @@ export class GameService {
     });
   }
 
-  async processMessage(message: InboundDiscordMessage): Promise<MessageDisposition> {
+  async processMessage(
+    message: InboundDiscordMessage,
+    options: { deferResetAnnouncement?: boolean } = {},
+  ): Promise<MessageDisposition> {
     return this.repository.immediate(() => {
       const duplicate = this.database
         .prepare("SELECT 1 FROM submissions WHERE message_id = ?")
@@ -409,12 +412,102 @@ export class GameService {
           submissionId: message.id,
         }),
         this.enqueue(round.channel_id, "delete_original", { messageId: message.id }),
-        this.enqueue(round.channel_id, "reset_announcement", {
-          content: `The attempt was reset. Provisional rewards were discarded; penalties remain. Start again at ${compiled.input.start}.`,
-          submissionId: message.id,
-        }),
       );
+      if (options.deferResetAnnouncement !== true) {
+        outboxOperationIds.push(
+          this.enqueue(round.channel_id, "reset_announcement", {
+            content: `The attempt was reset. Provisional rewards were discarded; penalties remain. Start again at ${compiled.input.start}.`,
+            submissionId: message.id,
+          }),
+        );
+      }
       return { kind: "recorded", decision: storedDecision, outboxOperationIds };
+    });
+  }
+
+  async invalidateAfterReconnectBreak(
+    message: InboundDiscordMessage,
+    breakingMessageId: string,
+  ): Promise<MessageDisposition> {
+    return this.repository.immediate(() => {
+      if (this.repository.submission(message.id) !== undefined) {
+        return { kind: "duplicate" };
+      }
+      const breaking = this.database
+        .prepare(
+          `SELECT submissions.round_id, rounds.channel_id
+           FROM submissions JOIN rounds ON rounds.id = submissions.round_id
+           WHERE submissions.message_id = ? AND submissions.decision LIKE 'broken_%'`,
+        )
+        .get(breakingMessageId) as { round_id: string; channel_id: string } | undefined;
+      if (breaking === undefined || breaking.channel_id !== message.channelId) {
+        throw new Error("reconnect break submission was not found for this channel");
+      }
+      const parsed = parseNumericSubmission(message.content);
+      if (parsed.kind === "conversation") {
+        return { kind: "conversation" };
+      }
+      this.ensurePlayer(message.authorId, message.displayName);
+      this.database
+        .prepare(
+          `INSERT INTO submissions
+            (message_id, round_id, attempt_id, author_id, original_digits, normalized_value,
+             decision, received_at)
+           VALUES (?, ?, NULL, ?, ?, ?, 'invalidated_after_reconnect_break', ?)`,
+        )
+        .run(
+          message.id,
+          breaking.round_id,
+          message.authorId,
+          parsed.digits,
+          parsed.kind === "safe_integer" ? parsed.value : null,
+          message.createdAt,
+        );
+      const operationId = this.enqueue(breaking.channel_id, "delete_original", {
+        messageId: message.id,
+        invalidatedAfterBreakingSubmissionId: breakingMessageId,
+      });
+      this.audit("submission_invalidated_after_reconnect_break", breaking.round_id, message.authorId, {
+        messageId: message.id,
+        breakingMessageId,
+      });
+      return {
+        kind: "recorded",
+        decision: "invalidated_after_reconnect_break",
+        outboxOperationIds: [operationId],
+      };
+    });
+  }
+
+  async ensureReconnectReset(breakingMessageId: string): Promise<string> {
+    return this.repository.immediate(() => {
+      const existing = this.database
+        .prepare(
+          `SELECT id FROM discord_outbox
+           WHERE operation_type = 'reset_announcement'
+             AND json_extract(payload_json, '$.submissionId') = ?`,
+        )
+        .get(breakingMessageId) as { id: string } | undefined;
+      if (existing !== undefined) {
+        return existing.id;
+      }
+      const breaking = this.database
+        .prepare(
+          `SELECT rounds.id AS round_id, rounds.channel_id, rounds.compiled_config_json
+           FROM submissions JOIN rounds ON rounds.id = submissions.round_id
+           WHERE submissions.message_id = ? AND submissions.decision LIKE 'broken_%'`,
+        )
+        .get(breakingMessageId) as
+        | { round_id: string; channel_id: string; compiled_config_json: string }
+        | undefined;
+      if (breaking === undefined) {
+        throw new Error("reconnect break submission was not found");
+      }
+      const compiled = JSON.parse(breaking.compiled_config_json) as CompiledRound;
+      return this.enqueue(breaking.channel_id, "reset_announcement", {
+        content: `The attempt was reset. Provisional rewards were discarded; penalties remain. Start again at ${compiled.input.start}.`,
+        submissionId: breakingMessageId,
+      });
     });
   }
 
