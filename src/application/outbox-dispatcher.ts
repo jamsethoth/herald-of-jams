@@ -32,15 +32,19 @@ function requiredString(payload: Record<string, unknown>, key: string): string {
 }
 
 export class OutboxDispatcher {
+  private initialized = false;
+
   constructor(
     private readonly outbox: OutboxRepository,
     private readonly transport: DiscordTransport,
     private readonly clock: Clock,
-  ) {
-    this.outbox.recoverStaleDeliveries();
-  }
+  ) {}
 
   async dispatchNext(channelId: string): Promise<DispatchResult> {
+    if (!this.initialized) {
+      this.outbox.recoverStaleDeliveries();
+      this.initialized = true;
+    }
     const operation = this.outbox.claimNext(channelId);
     if (operation === undefined) {
       return { kind: "idle" };

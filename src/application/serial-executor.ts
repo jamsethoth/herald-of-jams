@@ -20,4 +20,10 @@ export class SerialExecutor {
     });
     return result;
   }
+
+  async whenIdle(): Promise<void> {
+    while (this.tails.size > 0) {
+      await Promise.all([...this.tails.values()]);
+    }
+  }
 }

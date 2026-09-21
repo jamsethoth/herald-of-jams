@@ -9,7 +9,7 @@ interface RoundRouteDependencies {
   gameService: GameService;
   executor: SerialExecutor;
   adminRepository: AdminRepository;
-  permissionReport(): PermissionReport;
+  permissionReport(channelId?: string): PermissionReport | Promise<PermissionReport>;
 }
 
 export function registerRoundRoutes(
@@ -21,12 +21,12 @@ export function registerRoundRoutes(
   const hooks = { preHandler: [requireAuthenticated, csrfHook] };
   app.post("/admin/rounds/activate/:templateId", hooks, async (request, reply) => {
     const { templateId } = request.params as { templateId: string };
-    const permissions = dependencies.permissionReport();
-    if (!permissions.ok) {
-      return reply.code(409).type("text/plain").send(`Missing permissions: ${permissions.missing.join(", ")}`);
-    }
     try {
       const template = dependencies.adminRepository.getTemplate(templateId);
+      const permissions = await dependencies.permissionReport(template.channelId);
+      if (!permissions.ok) {
+        return reply.code(409).type("text/plain").send(`Missing permissions: ${permissions.missing.join(", ")}`);
+      }
       await dependencies.executor.run(template.channelId, () =>
         dependencies.gameService.activateRound(templateId),
       );

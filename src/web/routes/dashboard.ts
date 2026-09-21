@@ -5,7 +5,7 @@ import type { PermissionReport } from "../../discord/permissions.js";
 
 interface DashboardDependencies {
   database: Database.Database;
-  permissionReport(): PermissionReport;
+  permissionReport(channelId?: string): PermissionReport | Promise<PermissionReport>;
   discordConnected(): boolean;
 }
 
@@ -17,10 +17,10 @@ export function registerDashboardRoute(
   app.get("/admin", { preHandler: requireAuthenticated }, async (_request, reply) => {
     const round = dependencies.database
       .prepare(
-        `SELECT id, state FROM rounds
+        `SELECT id, state, channel_id FROM rounds
          WHERE state IN ('waiting_for_start', 'counting', 'paused') LIMIT 1`,
       )
-      .get() as { id: string; state: string } | undefined;
+      .get() as { id: string; state: string; channel_id: string } | undefined;
     const accepted =
       round === undefined
         ? 0
@@ -46,10 +46,11 @@ export function registerDashboardRoute(
         .prepare("SELECT COUNT(*) AS count FROM discord_outbox WHERE status = 'needs_review'")
         .get() as { count: number }
     ).count;
+    const permissions = await dependencies.permissionReport(round?.channel_id);
     return reply.view("dashboard.eta", {
       title: "Herald of Jams administration",
       connected: dependencies.discordConnected(),
-      permissions: dependencies.permissionReport(),
+      permissions,
       round,
       expectedPosition: accepted,
       unresolved,

@@ -1,9 +1,19 @@
-import { Events, type Client, type Interaction, type Message, type PartialMessage } from "discord.js";
+import {
+  Events,
+  PermissionFlagsBits,
+  REST,
+  Routes,
+  type Client,
+  type Interaction,
+  type Message,
+  type PartialMessage,
+} from "discord.js";
 
 import type { Clock, IdGenerator, InboundDiscordMessage, MessageDisposition } from "../application/contracts.js";
 import type { SerialExecutor } from "../application/serial-executor.js";
 import type { DispatchResult } from "../application/outbox-dispatcher.js";
 import type { GameRepository } from "../db/game-repository.js";
+import { REQUIRED_CAPABILITIES, validateActivationPermissions, type PermissionReport } from "./permissions.js";
 
 export interface GatewayMessage extends InboundDiscordMessage {
   guildId: string | null;
@@ -26,7 +36,7 @@ export interface DiscordGatewayHandlers {
 
 export interface DiscordGateway {
   subscribe(handlers: DiscordGatewayHandlers): () => void;
-  start(token: string, guildId: string): Promise<void>;
+  start(token: string, guildId: string, applicationId?: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -75,17 +85,45 @@ export class DiscordJsGateway implements DiscordGateway {
     };
   }
 
-  async start(token: string, guildId: string): Promise<void> {
-    await this.client.login(token);
-    const guild = await this.client.guilds.fetch(guildId);
-    await guild.commands.create({
+  async start(token: string, guildId: string, applicationId?: string): Promise<void> {
+    const command = {
       name: "leaderboard",
       description: "Show the current Herald of Jams season leaderboard",
-    });
+    };
+    if (applicationId !== undefined) {
+      await new REST().setToken(token).put(Routes.applicationGuildCommands(applicationId, guildId), {
+        body: [command],
+      });
+    }
+    await this.client.login(token);
+    if (applicationId === undefined) {
+      const guild = await this.client.guilds.fetch(guildId);
+      await guild.commands.create(command);
+    }
   }
 
   async stop(): Promise<void> {
     this.client.destroy();
+  }
+
+  async permissionReport(channelId: string): Promise<PermissionReport> {
+    const channel = await this.client.channels.fetch(channelId);
+    const user = this.client.user;
+    if (channel === null || !("permissionsFor" in channel) || user === null) {
+      return { ok: false, missing: [...REQUIRED_CAPABILITIES] };
+    }
+    const permissions = channel.permissionsFor(user);
+    if (permissions === null) {
+      return { ok: false, missing: [...REQUIRED_CAPABILITIES] };
+    }
+    return validateActivationPermissions({
+      viewChannel: permissions.has(PermissionFlagsBits.ViewChannel),
+      readMessageHistory: permissions.has(PermissionFlagsBits.ReadMessageHistory),
+      sendMessages: permissions.has(PermissionFlagsBits.SendMessages),
+      manageMessages: permissions.has(PermissionFlagsBits.ManageMessages),
+      useApplicationCommands: permissions.has(PermissionFlagsBits.UseApplicationCommands),
+      messageContentIntent: true,
+    });
   }
 }
 
@@ -97,7 +135,7 @@ interface AdapterDependencies {
   repository: GameRepository;
   clock: Clock;
   ids: IdGenerator;
-  config: { token: string; guildId: string; channelId: string };
+  config: { token: string; guildId: string; channelId: string; applicationId?: string };
 }
 
 function escapeDiscordText(value: string): string {
@@ -135,15 +173,27 @@ export class DiscordAdapter {
   constructor(private readonly dependencies: AdapterDependencies) {}
 
   async start(): Promise<void> {
+    await this.connect();
+    this.startAcceptingMessages();
+  }
+
+  async connect(): Promise<void> {
+    await this.dependencies.gateway.start(
+      this.dependencies.config.token,
+      this.dependencies.config.guildId,
+      this.dependencies.config.applicationId,
+    );
+  }
+
+  startAcceptingMessages(): void {
+    if (this.unsubscribe !== undefined) {
+      return;
+    }
     this.unsubscribe = this.dependencies.gateway.subscribe({
       messageCreate: async (message) => this.handleMessage(message),
       messageDelete: async (message) => this.handleDelete(message.id),
       interactionCreate: async (interaction) => this.handleInteraction(interaction),
     });
-    await this.dependencies.gateway.start(
-      this.dependencies.config.token,
-      this.dependencies.config.guildId,
-    );
   }
 
   async stop(): Promise<void> {
@@ -153,9 +203,19 @@ export class DiscordAdapter {
   }
 
   private async handleMessage(message: GatewayMessage): Promise<void> {
+    const activeChannel =
+      this.dependencies.config.channelId.length > 0
+        ? this.dependencies.config.channelId
+        : (
+            this.dependencies.repository.database
+              .prepare(
+                "SELECT channel_id FROM rounds WHERE state IN ('waiting_for_start', 'counting', 'paused') LIMIT 1",
+              )
+              .get() as { channel_id: string } | undefined
+          )?.channel_id;
     if (
       message.guildId !== this.dependencies.config.guildId ||
-      message.channelId !== this.dependencies.config.channelId ||
+      message.channelId !== activeChannel ||
       message.authorIsBot ||
       message.webhookId !== null
     ) {

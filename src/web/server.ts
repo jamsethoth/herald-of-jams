@@ -41,7 +41,7 @@ interface AdminServerDependencies {
   gameService?: GameService;
   executor?: SerialExecutor;
   outboxRepository?: OutboxRepository;
-  permissionReport?: () => PermissionReport;
+  permissionReport?: (channelId?: string) => PermissionReport | Promise<PermissionReport>;
   discordConnected?: () => boolean;
 }
 
