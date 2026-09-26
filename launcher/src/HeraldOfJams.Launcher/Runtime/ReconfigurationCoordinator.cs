@@ -12,11 +12,13 @@ public sealed class ReconfigurationCoordinator(AtomicConfigurationStore store, I
         if (issues.Count > 0) return new ReconfigurationResult(false, false, false, "Validation");
         ConfigurationCandidate? candidate = null;
         var activated = false;
+        var shutdownBegan = false;
         try
         {
             var generated = await credentials.GenerateAsync(input.AdminPassword, token);
             var contents = EnvFileSerializer.Serialize(new ValidatedSetup(input.DiscordToken, input.ApplicationId, input.GuildId, input.AdminPort), generated);
             candidate = await store.StageAsync(contents);
+            shutdownBegan = true;
             await lifecycle.StopAsync(token);
             candidate.Activate();
             activated = true;
@@ -33,8 +35,15 @@ public sealed class ReconfigurationCoordinator(AtomicConfigurationStore store, I
             }
 
             candidate?.Rollback();
+            var recovered = false;
+            string? recoveryFailureClass = null;
+            if (shutdownBegan)
+            {
+                try { recovered = await lifecycle.StartAsync(CancellationToken.None); }
+                catch (Exception recoveryError) { recoveryFailureClass = recoveryError.GetType().Name; }
+            }
             if (error is OperationCanceledException) throw;
-            return new ReconfigurationResult(false, false, false, error.GetType().Name);
+            return new ReconfigurationResult(false, false, recovered, error.GetType().Name, recoveryFailureClass);
         }
     }
 
