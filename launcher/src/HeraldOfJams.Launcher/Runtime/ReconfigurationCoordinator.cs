@@ -10,22 +10,60 @@ public sealed class ReconfigurationCoordinator(AtomicConfigurationStore store, I
     {
         var issues = SetupValidator.Validate(input);
         if (issues.Count > 0) return new ReconfigurationResult(false, false, false, "Validation");
+        ConfigurationCandidate? candidate = null;
+        var activated = false;
         try
         {
             var generated = await credentials.GenerateAsync(input.AdminPassword, token);
             var contents = EnvFileSerializer.Serialize(new ValidatedSetup(input.DiscordToken, input.ApplicationId, input.GuildId, input.AdminPort), generated);
-            var candidate = await store.StageAsync(contents);
+            candidate = await store.StageAsync(contents);
             await lifecycle.StopAsync(token);
             candidate.Activate();
+            activated = true;
             if (await lifecycle.StartAsync(token)) { candidate.Commit(); return new ReconfigurationResult(true, false, true); }
-            await lifecycle.StopAsync(token);
-            candidate.Rollback();
-            var recovered = await lifecycle.StartAsync(token);
-            return new ReconfigurationResult(false, true, recovered, "CandidateStartup", recovered ? null : "RollbackStartup");
+            return await RollBackAsync(candidate, "CandidateStartup");
         }
-        catch (Exception error) when (error is not OperationCanceledException)
+        catch (Exception error)
         {
+            if (activated && candidate is not null)
+            {
+                var result = await RollBackAsync(candidate, error.GetType().Name);
+                if (error is OperationCanceledException) throw;
+                return result;
+            }
+
+            candidate?.Rollback();
+            if (error is OperationCanceledException) throw;
             return new ReconfigurationResult(false, false, false, error.GetType().Name);
+        }
+    }
+
+    private async Task<ReconfigurationResult> RollBackAsync(ConfigurationCandidate candidate, string failureClass)
+    {
+        string? stopFailureClass = null;
+        try { await lifecycle.StopAsync(CancellationToken.None); }
+        catch (Exception error)
+        {
+            stopFailureClass = error.GetType().Name;
+        }
+
+        try { candidate.Rollback(); }
+        catch (Exception error)
+        {
+            return new ReconfigurationResult(false, false, false, failureClass, error.GetType().Name);
+        }
+
+        if (stopFailureClass is not null)
+            return new ReconfigurationResult(false, true, false, failureClass, stopFailureClass);
+
+        try
+        {
+            var recovered = await lifecycle.StartAsync(CancellationToken.None);
+            return new ReconfigurationResult(false, true, recovered, failureClass, recovered ? null : "RollbackStartup");
+        }
+        catch (Exception error)
+        {
+            return new ReconfigurationResult(false, true, false, failureClass, error.GetType().Name);
         }
     }
 }

@@ -73,7 +73,7 @@ try {
   $forbidden = Get-ChildItem -LiteralPath $package -Recurse -File | Where-Object { $_.Name -in @('.env','config.env') -or $_.Name -match '\.(sqlite|db)(-wal|-shm)?$|\.map$' -or $_.FullName -match '[\\/](test|tests|logs)[\\/]' }
   if ($forbidden) { throw "Package contains forbidden mutable or development files" }
 
-  $smokeData = Join-Path $stageRoot ".smoke-data"
+  $smokeData = Join-Path $stageRoot (".smoke-data-" + [guid]::NewGuid().ToString("N"))
   & (Join-Path $package "Herald of Jams.exe") --smoke-test --data-dir $smokeData
   if ($LASTEXITCODE -ne 0) { throw "Packaged smoke test failed" }
   $zip = Join-Path $artifacts "herald-of-jams-$version-win-x64.zip"
