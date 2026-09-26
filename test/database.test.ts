@@ -9,6 +9,7 @@ import { migrate, openDatabase } from "../src/db/database.js";
 import { DEFAULT_ANNOUNCEMENTS } from "../src/domain/announcement-templates.js";
 
 const temporaryDirectories: string[] = [];
+const migrationsDirectory = resolve(import.meta.dirname, "..", "src", "db", "migrations");
 
 function temporaryDatabase(): { database: Database.Database; directory: string } {
   const directory = mkdtempSync(join(tmpdir(), "herald-of-jams-"));
@@ -23,6 +24,25 @@ afterEach(() => {
 });
 
 describe("database migrations", () => {
+  it("migrates from an explicit directory independently of the working directory", () => {
+    const { database, directory } = temporaryDatabase();
+    const originalWorkingDirectory = process.cwd();
+
+    try {
+      process.chdir(directory);
+      migrate(database, migrationsDirectory);
+    } finally {
+      process.chdir(originalWorkingDirectory);
+    }
+
+    expect(database.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
+      { version: 1 },
+      { version: 2 },
+      { version: 3 },
+    ]);
+    database.close();
+  });
+
   it("opens SQLite with the required connection pragmas", () => {
     const { database } = temporaryDatabase();
 
@@ -36,8 +56,8 @@ describe("database migrations", () => {
   it("creates every table and required operational index idempotently", () => {
     const { database } = temporaryDatabase();
 
-    migrate(database);
-    migrate(database);
+    migrate(database, migrationsDirectory);
+    migrate(database, migrationsDirectory);
 
     const objects = database
       .prepare(
@@ -88,7 +108,7 @@ describe("database migrations", () => {
 
   it("enforces unique Discord message IDs and channel sequence numbers", () => {
     const { database } = temporaryDatabase();
-    migrate(database);
+    migrate(database, migrationsDirectory);
 
     database
       .prepare("INSERT INTO seasons (id, started_at) VALUES (?, ?)")
@@ -171,12 +191,12 @@ describe("database migrations", () => {
 
   it("refuses a database created by an unknown future schema version", () => {
     const { database } = temporaryDatabase();
-    migrate(database);
+    migrate(database, migrationsDirectory);
     database
       .prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)")
       .run(999, "future");
 
-    expect(() => migrate(database)).toThrow(/future schema version 999/i);
+    expect(() => migrate(database, migrationsDirectory)).toThrow(/future schema version 999/i);
     database.close();
   });
 
@@ -246,7 +266,7 @@ describe("database migrations", () => {
       )
       .run();
 
-    migrate(database);
+    migrate(database, migrationsDirectory);
 
     expect(database.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
       { version: 1 },

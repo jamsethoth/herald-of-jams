@@ -7,11 +7,15 @@
   "engines": {
     "node": "24.21.0"
   },
+  "files": [
+    "build/app/**",
+    "LICENSE"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-runtime-assets.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "start": "node dist/src/main.js"
+    "start": "node build/app/main.js"
   },
   "dependencies": {
     "@fastify/cookie": "11.1.2",

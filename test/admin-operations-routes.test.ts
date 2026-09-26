@@ -6,7 +6,13 @@ import { SerialExecutor } from "../src/application/serial-executor.js";
 import { OutboxRepository } from "../src/db/outbox-repository.js";
 import { hashPassword } from "../src/web/auth.js";
 import { buildAdminServer } from "../src/web/server.js";
-import { createTestDatabase, message, roundTemplate, type TestDatabaseContext } from "./fixtures.js";
+import {
+  createTestDatabase,
+  message,
+  roundTemplate,
+  testRuntimeResources,
+  type TestDatabaseContext,
+} from "./fixtures.js";
 
 const csrf = (body: string) => /name="_csrf" value="([^"]+)"/.exec(body)?.[1] ?? "";
 const cookie = (header: string | string[] | undefined) =>
@@ -44,6 +50,7 @@ describe("moderation, leaderboard, and operation routes", () => {
       config,
       database: context.database,
       clock: context.clock,
+      resources: testRuntimeResources,
       adminRepository: context.adminRepository,
       gameService: service,
       executor: new SerialExecutor(),

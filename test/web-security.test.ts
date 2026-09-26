@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppConfig } from "../src/config.js";
 import { hashPassword } from "../src/web/auth.js";
 import { buildAdminServer } from "../src/web/server.js";
-import { createTestDatabase, type TestDatabaseContext } from "./fixtures.js";
+import {
+  createTestDatabase,
+  testRuntimeResources,
+  type TestDatabaseContext,
+} from "./fixtures.js";
 
 function cookieValue(setCookie: string | string[] | undefined): string {
   const header = Array.isArray(setCookie) ? setCookie.at(-1) : setCookie;
@@ -45,7 +49,19 @@ describe("admin server security", () => {
   afterEach(() => context.close());
 
   it("redirects unauthenticated requests and rejects mutation without CSRF", async () => {
-    const app = buildAdminServer({ config, database: context.database, clock: context.clock });
+    const app = buildAdminServer({
+      config,
+      database: context.database,
+      clock: context.clock,
+      resources: testRuntimeResources,
+    });
+
+    const loginPage = await app.inject({ method: "GET", url: "/admin/login" });
+    expect(loginPage.statusCode).toBe(200);
+    expect(loginPage.body).toContain("Herald of Jams login");
+    const stylesheet = await app.inject({ method: "GET", url: "/admin/static/admin.css" });
+    expect(stylesheet.statusCode).toBe(200);
+    expect(stylesheet.headers["content-type"]).toMatch(/^text\/css/);
 
     const dashboard = await app.inject({ method: "GET", url: "/admin" });
     expect(dashboard.statusCode).toBe(302);
@@ -61,7 +77,12 @@ describe("admin server security", () => {
   });
 
   it("regenerates on login, uses hardened scoped cookies, and destroys on logout", async () => {
-    const app = buildAdminServer({ config, database: context.database, clock: context.clock });
+    const app = buildAdminServer({
+      config,
+      database: context.database,
+      clock: context.clock,
+      resources: testRuntimeResources,
+    });
     const loginPage = await app.inject({ method: "GET", url: "/admin/login" });
     const anonymousCookie = cookieValue(loginPage.headers["set-cookie"]);
     const token = csrfToken(loginPage.body);
@@ -118,7 +139,12 @@ describe("admin server security", () => {
   });
 
   it("blocks for fifteen minutes after five generic login failures", async () => {
-    const app = buildAdminServer({ config, database: context.database, clock: context.clock });
+    const app = buildAdminServer({
+      config,
+      database: context.database,
+      clock: context.clock,
+      resources: testRuntimeResources,
+    });
     const loginPage = await app.inject({ method: "GET", url: "/admin/login" });
     const cookie = cookieValue(loginPage.headers["set-cookie"]);
     const token = csrfToken(loginPage.body);
@@ -154,7 +180,12 @@ describe("admin server security", () => {
     config.runtime.production = true;
     config.admin.secureCookie = true;
     config.admin.trustProxy = true;
-    const app = buildAdminServer({ config, database: context.database, clock: context.clock });
+    const app = buildAdminServer({
+      config,
+      database: context.database,
+      clock: context.clock,
+      resources: testRuntimeResources,
+    });
 
     const forged = await app.inject({
       method: "GET",

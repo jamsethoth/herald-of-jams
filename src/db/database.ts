@@ -9,9 +9,8 @@ interface Migration {
   requiresForeignKeysOff: boolean;
 }
 
-function loadMigrations(): readonly Migration[] {
-  const directory = resolve(process.cwd(), "src", "db", "migrations");
-  return readdirSync(directory)
+function loadMigrations(migrationsDirectory: string): readonly Migration[] {
+  return readdirSync(migrationsDirectory)
     .map((filename) => {
       const match = /^(\d+)-.+\.sql$/.exec(filename);
       if (match === null) {
@@ -19,7 +18,7 @@ function loadMigrations(): readonly Migration[] {
       }
       return {
         version: Number(match[1]),
-        sql: readFileSync(resolve(directory, filename), "utf8"),
+        sql: readFileSync(resolve(migrationsDirectory, filename), "utf8"),
         requiresForeignKeysOff: false,
       };
     })
@@ -61,8 +60,8 @@ export function openDatabase(path: string): Database.Database {
   return database;
 }
 
-export function migrate(database: Database.Database): void {
-  const migrations = loadMigrations();
+export function migrate(database: Database.Database, migrationsDirectory: string): void {
+  const migrations = loadMigrations(migrationsDirectory);
   const knownVersions = new Set(migrations.map(({ version }) => version));
   const alreadyApplied = appliedVersions(database);
 

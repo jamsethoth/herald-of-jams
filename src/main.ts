@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { Clock, IdGenerator } from "./application/contracts.js";
 import { GameService } from "./application/game-service.js";
@@ -17,6 +17,7 @@ import { OutboxRepository } from "./db/outbox-repository.js";
 import { DiscordAdapter, DiscordJsGateway } from "./discord/discord-adapter.js";
 import { createDiscordClient, DiscordJsTransport } from "./discord/discord-transport.js";
 import { REQUIRED_CAPABILITIES } from "./discord/permissions.js";
+import { resolveRuntimeResources, type RuntimeResources } from "./runtime/resources.js";
 import { buildAdminServer } from "./web/server.js";
 
 export interface RuntimeSteps {
@@ -75,7 +76,10 @@ class UuidGenerator implements IdGenerator {
   }
 }
 
-export function composeApplication(config: AppConfig): ApplicationRuntime {
+export function composeApplication(
+  config: AppConfig,
+  resources: RuntimeResources,
+): ApplicationRuntime {
   mkdirSync(dirname(config.database.path), { recursive: true });
   const database = openDatabase(config.database.path);
   const clock = new SystemClock();
@@ -128,6 +132,7 @@ export function composeApplication(config: AppConfig): ApplicationRuntime {
     config,
     database,
     clock,
+    resources,
     adminRepository,
     gameService,
     executor,
@@ -142,7 +147,7 @@ export function composeApplication(config: AppConfig): ApplicationRuntime {
   });
 
   return new ApplicationRuntime({
-    migrate: () => migrate(database),
+    migrate: () => migrate(database, resources.migrationsDirectory),
     loadActiveChannel: () =>
       (
         database
@@ -189,7 +194,11 @@ export function composeApplication(config: AppConfig): ApplicationRuntime {
 }
 
 export async function main(): Promise<void> {
-  const application = composeApplication(loadConfig(process.env));
+  const applicationRoot = dirname(fileURLToPath(import.meta.url));
+  const application = composeApplication(
+    loadConfig(process.env),
+    resolveRuntimeResources(applicationRoot),
+  );
   const shutdown = async () => application.shutdown();
   process.once("SIGINT", () => void shutdown());
   process.once("SIGTERM", () => void shutdown());
