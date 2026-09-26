@@ -6,7 +6,13 @@ import { SerialExecutor } from "../src/application/serial-executor.js";
 import { hashPassword } from "../src/web/auth.js";
 import { buildAdminServer } from "../src/web/server.js";
 import { DEFAULT_ANNOUNCEMENTS } from "../src/domain/announcement-templates.js";
-import { createTestDatabase, message, roundTemplate, type TestDatabaseContext } from "./fixtures.js";
+import {
+  createTestDatabase,
+  message,
+  roundTemplate,
+  testRuntimeResources,
+  type TestDatabaseContext,
+} from "./fixtures.js";
 
 function token(body: string): string {
   return /name="_csrf" value="([^"]+)"/.exec(body)?.[1] ?? "";
@@ -38,7 +44,7 @@ describe("round administration routes", () => {
         secureCookie: false,
         trustProxy: false,
       },
-      runtime: { production: false },
+      runtime: { production: false, desktop: false },
     };
   });
 
@@ -49,6 +55,8 @@ describe("round administration routes", () => {
       config,
       database: context.database,
       clock: context.clock,
+      resources: testRuntimeResources,
+      health: () => ({ status: "ready" }),
       adminRepository: context.adminRepository,
       gameService: service,
       executor: new SerialExecutor(),

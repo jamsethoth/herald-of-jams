@@ -6,11 +6,14 @@ import { OutboxDispatcher } from "../src/application/outbox-dispatcher.js";
 import { OutboxRepository } from "../src/db/outbox-repository.js";
 import { createTestDatabase, message, roundTemplate, type TestDatabaseContext } from "./fixtures.js";
 import { FakeDiscordTransport } from "./fake-discord-transport.js";
+import { RuntimeHealth } from "../src/runtime/health.js";
 
 describe("ApplicationRuntime", () => {
   it("gates live intake behind migration, command registration, connection, reconciliation, and dispatch", async () => {
     const events: string[] = [];
+    const health = new RuntimeHealth();
     const runtime = new ApplicationRuntime({
+      health,
       migrate: () => void events.push("migrate"),
       loadActiveChannel: () => {
         events.push("load-active-state");
@@ -21,7 +24,10 @@ describe("ApplicationRuntime", () => {
         events.push("register-command");
         events.push("connect");
       },
-      reconcile: async () => void events.push("reconcile"),
+      reconcile: async () => {
+        expect(health.snapshot()).toEqual({ status: "reconciling" });
+        events.push("reconcile");
+      },
       dispatchPending: async () => void events.push("dispatch"),
       enableLiveIntake: () => void events.push("live"),
       stopHttp: async () => void events.push("http-stop"),
@@ -31,6 +37,7 @@ describe("ApplicationRuntime", () => {
     });
 
     await runtime.start();
+    expect(health.snapshot()).toEqual({ status: "ready" });
     expect(events.filter((event) => event !== "http-start")).toEqual([
       "migrate",
       "load-active-state",

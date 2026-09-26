@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { Clock, IdGenerator } from "./application/contracts.js";
 import { GameService } from "./application/game-service.js";
@@ -9,7 +9,7 @@ import { OutboxDispatcher } from "./application/outbox-dispatcher.js";
 import { OutboxPump } from "./application/outbox-pump.js";
 import { ReconciliationService } from "./application/reconciliation-service.js";
 import { SerialExecutor } from "./application/serial-executor.js";
-import { loadConfig, type AppConfig } from "./config.js";
+import { resolveConfig, type AppConfig } from "./config.js";
 import { AdminRepository } from "./db/admin-repository.js";
 import { migrate, openDatabase } from "./db/database.js";
 import { GameRepository } from "./db/game-repository.js";
@@ -17,9 +17,16 @@ import { OutboxRepository } from "./db/outbox-repository.js";
 import { DiscordAdapter, DiscordJsGateway } from "./discord/discord-adapter.js";
 import { createDiscordClient, DiscordJsTransport } from "./discord/discord-transport.js";
 import { REQUIRED_CAPABILITIES } from "./discord/permissions.js";
+import { parseLaunchOptions } from "./runtime/launch-options.js";
+import { runPackageSmokeTest } from "./runtime/package-smoke.js";
+import { installControlChannel } from "./runtime/control-channel.js";
+import { RuntimeHealth } from "./runtime/health.js";
+import { resolveRuntimeResources, type RuntimeResources } from "./runtime/resources.js";
+import { formatStartupError } from "./runtime/startup-error.js";
 import { buildAdminServer } from "./web/server.js";
 
 export interface RuntimeSteps {
+  health?: RuntimeHealth;
   migrate(): void;
   loadActiveChannel(): string | null;
   startHttp(): Promise<void>;
@@ -41,15 +48,18 @@ export class ApplicationRuntime {
 
   async start(): Promise<void> {
     if (this.started) return;
+    this.steps.health?.set("starting");
     this.steps.migrate();
     const activeChannel = this.steps.loadActiveChannel();
     await this.steps.connectDiscord();
+    this.steps.health?.set("reconciling");
     if (activeChannel !== null) {
       await this.steps.reconcile(activeChannel);
     }
     await this.steps.dispatchPending(activeChannel);
     await this.steps.startHttp();
     this.steps.enableLiveIntake();
+    this.steps.health?.set("ready");
     this.started = true;
   }
 
@@ -75,7 +85,10 @@ class UuidGenerator implements IdGenerator {
   }
 }
 
-export function composeApplication(config: AppConfig): ApplicationRuntime {
+export function composeApplication(
+  config: AppConfig,
+  resources: RuntimeResources,
+): ApplicationRuntime {
   mkdirSync(dirname(config.database.path), { recursive: true });
   const database = openDatabase(config.database.path);
   const clock = new SystemClock();
@@ -124,10 +137,13 @@ export function composeApplication(config: AppConfig): ApplicationRuntime {
       channelId: "",
     },
   });
+  const health = new RuntimeHealth(() => adapter.hasCriticalFailure());
   const server = buildAdminServer({
     config,
     database,
     clock,
+    resources,
+    health: () => health.snapshot(),
     adminRepository,
     gameService,
     executor,
@@ -142,7 +158,8 @@ export function composeApplication(config: AppConfig): ApplicationRuntime {
   });
 
   return new ApplicationRuntime({
-    migrate: () => migrate(database),
+    health,
+    migrate: () => migrate(database, resources.migrationsDirectory),
     loadActiveChannel: () =>
       (
         database
@@ -189,8 +206,29 @@ export function composeApplication(config: AppConfig): ApplicationRuntime {
 }
 
 export async function main(): Promise<void> {
-  const application = composeApplication(loadConfig(process.env));
-  const shutdown = async () => application.shutdown();
+  const options = parseLaunchOptions(process.argv.slice(2));
+  const applicationRoot = dirname(fileURLToPath(import.meta.url));
+  const resources = resolveRuntimeResources(applicationRoot);
+  if (options.smokeTest) {
+    if (options.smokeDataDirectory === undefined) {
+      throw new Error("Invalid configuration: --data-dir is required with --smoke-test");
+    }
+    await runPackageSmokeTest({ dataDirectory: options.smokeDataDirectory, resources });
+    process.stdout.write("Herald of Jams package smoke test passed\n");
+    return;
+  }
+  const application = composeApplication(
+    resolveConfig(options, process.env),
+    resources,
+  );
+  let disposeControl = (): void => undefined;
+  const shutdown = async () => {
+    disposeControl();
+    await application.shutdown();
+  };
+  if (options.desktop) {
+    disposeControl = installControlChannel(process.stdin, shutdown);
+  }
   process.once("SIGINT", () => void shutdown());
   process.once("SIGTERM", () => void shutdown());
   await application.start();
@@ -200,7 +238,6 @@ const entrypoint = process.argv[1];
 if (entrypoint !== undefined && import.meta.url === pathToFileURL(entrypoint).href) {
   main().catch((error: unknown) => {
     process.exitCode = 1;
-    const name = error instanceof Error ? error.name : "UnknownError";
-    process.stderr.write(`Herald of Jams failed to start: ${name}\n`);
+    process.stderr.write(`${formatStartupError(error)}\n`);
   });
 }

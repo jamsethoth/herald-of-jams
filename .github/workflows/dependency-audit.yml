@@ -1,0 +1,63 @@
+name: Dependency Audit
+
+on:
+  schedule:
+    - cron: "23 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pnpm-audit:
+    name: pnpm-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 12.5.1
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run pnpm audit
+        id: audit
+        run: pnpm audit --audit-level high --json > pnpm-audit.json
+        continue-on-error: true
+
+      - name: Write audit summary
+        run: |
+          {
+            echo "## pnpm audit"
+            echo
+            echo "- Command: \`pnpm audit --audit-level high --json\`"
+            echo "- Step outcome: \`${{ steps.audit.outcome }}\`"
+            echo
+            echo "This workflow is intentionally non-blocking until the current dependency vulnerability baseline is triaged."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v7
+        with:
+          name: pnpm-audit-report
+          path: pnpm-audit.json
+          if-no-files-found: error

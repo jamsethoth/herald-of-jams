@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import type Database from "better-sqlite3";
 
@@ -9,6 +9,13 @@ import { AdminRepository } from "../src/db/admin-repository.js";
 import { openDatabase, migrate } from "../src/db/database.js";
 import { GameRepository } from "../src/db/game-repository.js";
 import type { RoundTemplateInput } from "../src/domain/types.js";
+import type { RuntimeResources } from "../src/runtime/resources.js";
+
+export const testRuntimeResources: RuntimeResources = {
+  migrationsDirectory: resolve(import.meta.dirname, "..", "src", "db", "migrations"),
+  viewsDirectory: resolve(import.meta.dirname, "..", "src", "web", "views"),
+  publicDirectory: resolve(import.meta.dirname, "..", "src", "web", "public"),
+};
 
 export class TestClock implements Clock {
   constructor(private current = new Date("2026-09-21T00:00:00.000Z")) {}
@@ -43,7 +50,7 @@ export interface TestDatabaseContext {
 export function createTestDatabase(): TestDatabaseContext {
   const directory = mkdtempSync(join(tmpdir(), "herald-of-jams-service-"));
   const database = openDatabase(join(directory, "game.sqlite"));
-  migrate(database);
+  migrate(database, testRuntimeResources.migrationsDirectory);
   const clock = new TestClock();
   const ids = new SequenceIds();
   return {
