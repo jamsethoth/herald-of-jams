@@ -15,6 +15,7 @@
     "build": "tsc -p tsconfig.build.json && node scripts/copy-runtime-assets.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "package:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1",
     "start": "node build/app/main.js"
   },
   "dependencies": {

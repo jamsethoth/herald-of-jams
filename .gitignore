@@ -3,6 +3,8 @@ dist/
 build/
 **/bin/
 **/obj/
+.packaging/
+artifacts/
 .env
 data/
 *.sqlite
