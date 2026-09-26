@@ -11,12 +11,30 @@ function Get-Sha256([string]$Path) {
   finally { $stream.Dispose() }
 }
 
+function Invoke-PackageSmoke([string]$Executable, [string]$DataDirectory, [string]$FailureMessage) {
+  $info = New-Object System.Diagnostics.ProcessStartInfo
+  $info.FileName = $Executable
+  $info.Arguments = '--smoke-test --data-dir "' + $DataDirectory.Replace('"', '\"') + '"'
+  $info.UseShellExecute = $false
+  $info.CreateNoWindow = $true
+  $process = [System.Diagnostics.Process]::Start($info)
+  if ($null -eq $process) { throw $FailureMessage }
+  try {
+    $process.WaitForExit()
+    if ($process.ExitCode -ne 0) { throw $FailureMessage }
+  }
+  finally { $process.Dispose() }
+}
+
 $repo = Split-Path -Parent $PSScriptRoot
 $stageRoot = Join-Path $repo ".packaging"
 $deploy = Join-Path $stageRoot "deploy"
 $package = Join-Path $stageRoot "package"
 $downloads = Join-Path $stageRoot "downloads"
 $artifacts = Join-Path $repo "artifacts"
+$zipVerificationName = "Herald ZIP Verification H" + [char]0x00E9 + "rald " + [guid]::NewGuid().ToString("N")
+$zipVerification = Join-Path ([IO.Path]::GetTempPath()) $zipVerificationName
+$zipSmokeData = "$zipVerification-data"
 
 foreach ($clean in @($deploy, $package, (Join-Path $stageRoot "node"), (Join-Path $stageRoot "launcher"))) {
   if (Test-Path -LiteralPath $clean) { Remove-Item -LiteralPath $clean -Recurse -Force }
@@ -33,7 +51,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "Node build failed" }
   dotnet test launcher/HeraldOfJams.Launcher.slnx --configuration Release
   if ($LASTEXITCODE -ne 0) { throw "Launcher tests failed" }
-  corepack.cmd pnpm --filter herald-of-jams --prod deploy $deploy
+  corepack.cmd pnpm --config.node-linker=hoisted --filter herald-of-jams --prod deploy $deploy
   if ($LASTEXITCODE -ne 0) { throw "Production deploy failed" }
 
   $app = Join-Path $package "app"
@@ -74,13 +92,18 @@ try {
   if ($forbidden) { throw "Package contains forbidden mutable or development files" }
 
   $smokeData = Join-Path $stageRoot (".smoke-data-" + [guid]::NewGuid().ToString("N"))
-  & (Join-Path $package "Herald of Jams.exe") --smoke-test --data-dir $smokeData
-  if ($LASTEXITCODE -ne 0) { throw "Packaged smoke test failed" }
+  Invoke-PackageSmoke (Join-Path $package "Herald of Jams.exe") $smokeData "Packaged smoke test failed"
   $zip = Join-Path $artifacts "herald-of-jams-$version-win-x64.zip"
   if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
   Compress-Archive -Path (Join-Path $package "*") -DestinationPath $zip -CompressionLevel Optimal
+  Expand-Archive -LiteralPath $zip -DestinationPath $zipVerification
+  Invoke-PackageSmoke (Join-Path $zipVerification "Herald of Jams.exe") $zipSmokeData "Extracted package smoke test failed"
   $hash = Get-Sha256 $zip
   $size = (Get-Item -LiteralPath $zip).Length
   Write-Output "$zip ($size bytes, SHA256 $hash)"
 }
-finally { Pop-Location }
+finally {
+  if (Test-Path -LiteralPath $zipVerification) { Remove-Item -LiteralPath $zipVerification -Recurse -Force }
+  if (Test-Path -LiteralPath $zipSmokeData) { Remove-Item -LiteralPath $zipSmokeData -Recurse -Force }
+  Pop-Location
+}
