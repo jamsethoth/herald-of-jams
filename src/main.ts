@@ -18,6 +18,7 @@ import { DiscordAdapter, DiscordJsGateway } from "./discord/discord-adapter.js";
 import { createDiscordClient, DiscordJsTransport } from "./discord/discord-transport.js";
 import { REQUIRED_CAPABILITIES } from "./discord/permissions.js";
 import { parseLaunchOptions } from "./runtime/launch-options.js";
+import { runPackageSmokeTest } from "./runtime/package-smoke.js";
 import { installControlChannel } from "./runtime/control-channel.js";
 import { RuntimeHealth } from "./runtime/health.js";
 import { resolveRuntimeResources, type RuntimeResources } from "./runtime/resources.js";
@@ -207,9 +208,18 @@ export function composeApplication(
 export async function main(): Promise<void> {
   const options = parseLaunchOptions(process.argv.slice(2));
   const applicationRoot = dirname(fileURLToPath(import.meta.url));
+  const resources = resolveRuntimeResources(applicationRoot);
+  if (options.smokeTest) {
+    if (options.smokeDataDirectory === undefined) {
+      throw new Error("Invalid configuration: --data-dir is required with --smoke-test");
+    }
+    await runPackageSmokeTest({ dataDirectory: options.smokeDataDirectory, resources });
+    process.stdout.write("Herald of Jams package smoke test passed\n");
+    return;
+  }
   const application = composeApplication(
     resolveConfig(options, process.env),
-    resolveRuntimeResources(applicationRoot),
+    resources,
   );
   let disposeControl = (): void => undefined;
   const shutdown = async () => {
