@@ -128,6 +128,7 @@ export function buildAdminServer(dependencies: AdminServerDependencies) {
   app.addHook("onRequest", async (request, reply) => {
     if (
       config.runtime.production &&
+      !config.runtime.desktop &&
       request.url.startsWith("/admin") &&
       request.protocol !== "https"
     ) {

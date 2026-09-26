@@ -9,7 +9,7 @@ import { OutboxDispatcher } from "./application/outbox-dispatcher.js";
 import { OutboxPump } from "./application/outbox-pump.js";
 import { ReconciliationService } from "./application/reconciliation-service.js";
 import { SerialExecutor } from "./application/serial-executor.js";
-import { loadConfig, type AppConfig } from "./config.js";
+import { resolveConfig, type AppConfig } from "./config.js";
 import { AdminRepository } from "./db/admin-repository.js";
 import { migrate, openDatabase } from "./db/database.js";
 import { GameRepository } from "./db/game-repository.js";
@@ -17,6 +17,7 @@ import { OutboxRepository } from "./db/outbox-repository.js";
 import { DiscordAdapter, DiscordJsGateway } from "./discord/discord-adapter.js";
 import { createDiscordClient, DiscordJsTransport } from "./discord/discord-transport.js";
 import { REQUIRED_CAPABILITIES } from "./discord/permissions.js";
+import { parseLaunchOptions } from "./runtime/launch-options.js";
 import { resolveRuntimeResources, type RuntimeResources } from "./runtime/resources.js";
 import { buildAdminServer } from "./web/server.js";
 
@@ -194,9 +195,10 @@ export function composeApplication(
 }
 
 export async function main(): Promise<void> {
+  const options = parseLaunchOptions(process.argv.slice(2));
   const applicationRoot = dirname(fileURLToPath(import.meta.url));
   const application = composeApplication(
-    loadConfig(process.env),
+    resolveConfig(options, process.env),
     resolveRuntimeResources(applicationRoot),
   );
   const shutdown = async () => application.shutdown();

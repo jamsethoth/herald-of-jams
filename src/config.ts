@@ -1,3 +1,11 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { parseEnv } from "node:util";
+
+import { z } from "zod";
+
+import type { LaunchOptions } from "./runtime/launch-options.js";
+
 export interface AppConfig {
   discord: {
     token: string;
@@ -17,6 +25,7 @@ export interface AppConfig {
   };
   runtime: {
     production: boolean;
+    desktop: boolean;
   };
 }
 
@@ -48,7 +57,7 @@ function formatValidationError(error: z.ZodError): Error {
   return new Error(`Invalid configuration: ${details}`);
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
+function parseConfiguration(env: NodeJS.ProcessEnv, desktop: boolean): AppConfig {
   const result = environmentSchema.safeParse(env);
   if (!result.success) {
     throw formatValidationError(result.error);
@@ -58,14 +67,36 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   const production = parsed.NODE_ENV === "production";
   const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
 
-  if (production && !parsed.TRUST_PROXY) {
-    throw new Error("Invalid configuration: TRUST_PROXY must be true in production");
-  }
-
-  if (!parsed.ADMIN_SECURE_COOKIE && (production || !loopbackHosts.has(parsed.ADMIN_HOST))) {
-    throw new Error(
-      "Invalid configuration: ADMIN_SECURE_COOKIE may be false only for loopback development",
-    );
+  if (desktop) {
+    if (!production) {
+      throw new Error("Invalid configuration: NODE_ENV must be production in desktop mode");
+    }
+    if (!/^\d+$/.test(parsed.DISCORD_APPLICATION_ID)) {
+      throw new Error("Invalid configuration: DISCORD_APPLICATION_ID must be decimal");
+    }
+    if (!/^\d+$/.test(parsed.DISCORD_GUILD_ID)) {
+      throw new Error("Invalid configuration: DISCORD_GUILD_ID must be decimal");
+    }
+    if (!loopbackHosts.has(parsed.ADMIN_HOST)) {
+      throw new Error("Invalid configuration: ADMIN_HOST must be loopback in desktop mode");
+    }
+    if (parsed.TRUST_PROXY) {
+      throw new Error("Invalid configuration: TRUST_PROXY must be false in desktop mode");
+    }
+    if (parsed.ADMIN_SECURE_COOKIE) {
+      throw new Error(
+        "Invalid configuration: ADMIN_SECURE_COOKIE must be false in desktop mode",
+      );
+    }
+  } else {
+    if (production && !parsed.TRUST_PROXY) {
+      throw new Error("Invalid configuration: TRUST_PROXY must be true in production");
+    }
+    if (!parsed.ADMIN_SECURE_COOKIE && (production || !loopbackHosts.has(parsed.ADMIN_HOST))) {
+      throw new Error(
+        "Invalid configuration: ADMIN_SECURE_COOKIE may be false only for loopback development",
+      );
+    }
   }
 
   return {
@@ -83,7 +114,48 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
       secureCookie: parsed.ADMIN_SECURE_COOKIE,
       trustProxy: parsed.TRUST_PROXY,
     },
-    runtime: { production },
+    runtime: { production, desktop },
   };
 }
-import { z } from "zod";
+
+export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
+  return parseConfiguration(env, false);
+}
+
+function loadExplicitEnvironment(configPath: string): NodeJS.ProcessEnv {
+  let contents: string;
+  try {
+    contents = readFileSync(configPath, "utf8");
+  } catch {
+    throw new Error("Invalid configuration file: unable to read config");
+  }
+  if (contents.includes("\0")) {
+    throw new Error("Invalid configuration file: NUL bytes are not allowed");
+  }
+  const malformed = contents.split(/\r?\n/u).some((line) => {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) return false;
+    const assignment = trimmed.startsWith("export ") ? trimmed.slice(7).trimStart() : trimmed;
+    return !/^[A-Za-z_][A-Za-z0-9_]*\s*=/.test(assignment);
+  });
+  if (malformed) {
+    throw new Error("Invalid configuration file: malformed assignment");
+  }
+  try {
+    return parseEnv(contents);
+  } catch {
+    throw new Error("Invalid configuration file: unable to parse config");
+  }
+}
+
+export function resolveConfig(options: LaunchOptions, env: NodeJS.ProcessEnv): AppConfig {
+  if (options.configPath === undefined) {
+    return parseConfiguration(env, options.desktop);
+  }
+  const fileEnvironment = loadExplicitEnvironment(options.configPath);
+  fileEnvironment.DATABASE_PATH ??= resolve(
+    dirname(options.configPath),
+    "herald-of-jams.sqlite",
+  );
+  return parseConfiguration(fileEnvironment, options.desktop);
+}

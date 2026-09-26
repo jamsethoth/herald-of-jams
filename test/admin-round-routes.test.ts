@@ -44,7 +44,7 @@ describe("round administration routes", () => {
         secureCookie: false,
         trustProxy: false,
       },
-      runtime: { production: false },
+      runtime: { production: false, desktop: false },
     };
   });
 

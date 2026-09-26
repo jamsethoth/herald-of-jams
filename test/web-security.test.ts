@@ -42,7 +42,7 @@ describe("admin server security", () => {
         secureCookie: false,
         trustProxy: false,
       },
-      runtime: { production: false },
+      runtime: { production: false, desktop: false },
     };
   });
 
