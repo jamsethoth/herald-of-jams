@@ -16,6 +16,17 @@ public sealed class PackageSmokeRunnerTests
         await Assert.ThrowsAsync<InvalidDataException>(() => new PackageSmokeRunner(package.Path, new FakeRunner(0, package.Path)).RunAsync(Path.Combine(package.Path, "data"), CancellationToken.None));
     }
 
+    [Fact]
+    public async Task RefusesToDeleteAPreexistingDirectory()
+    {
+        using var package = new TemporaryPackage();
+        var data = Path.Combine(package.Path, "existing-data");
+        Directory.CreateDirectory(data);
+        File.WriteAllText(Path.Combine(data, "keep.txt"), "keep");
+        await Assert.ThrowsAsync<IOException>(() => new PackageSmokeRunner(package.Path, new FakeRunner(0)).RunAsync(data, CancellationToken.None));
+        Assert.Equal("keep", File.ReadAllText(Path.Combine(data, "keep.txt")));
+    }
+
     private sealed class FakeRunner(int exitCode, string? mutate = null) : IPackageNodeRunner
     {
         public Task<int> RunAsync(string packageDirectory, string dataDirectory, CancellationToken token)

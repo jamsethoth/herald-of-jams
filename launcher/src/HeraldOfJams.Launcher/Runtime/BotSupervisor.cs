@@ -11,6 +11,7 @@ public sealed class BotSupervisor(IBotProcessFactory factory, IBotHealthProbe he
     private CancellationTokenSource? monitorCancellation;
     private IBotProcess? process;
     private bool intentionalStop;
+    private TaskCompletionSource<bool>? startupCompletion;
     private readonly IAsyncDelay delay = delay ?? new SystemAsyncDelay();
     private readonly ILauncherClock clock = clock ?? new SystemLauncherClock();
 
@@ -19,6 +20,7 @@ public sealed class BotSupervisor(IBotProcessFactory factory, IBotHealthProbe he
 
     public async Task<bool> StartAsync(CancellationToken token = default)
     {
+        Task<bool> startup;
         await gate.WaitAsync(token);
         try
         {
@@ -26,11 +28,13 @@ public sealed class BotSupervisor(IBotProcessFactory factory, IBotHealthProbe he
             intentionalStop = false;
             SetState(LauncherState.Starting);
             process = factory.Start(options);
+            startupCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            startup = startupCompletion.Task;
             monitorCancellation = new CancellationTokenSource();
             _ = MonitorAsync(process, monitorCancellation.Token);
-            return true;
         }
         finally { gate.Release(); }
+        return await startup.WaitAsync(token);
     }
 
     public async Task RestartAsync(CancellationToken token = default) { await StopAsync(token); await StartAsync(token); }
@@ -42,6 +46,7 @@ public sealed class BotSupervisor(IBotProcessFactory factory, IBotHealthProbe he
         {
             if (process is null) { SetState(LauncherState.Stopped); return; }
             intentionalStop = true;
+            startupCompletion?.TrySetResult(false);
             monitorCancellation?.Cancel();
             SetState(LauncherState.Stopping);
             await process.WriteAsync("shutdown\n", token);
@@ -70,11 +75,15 @@ public sealed class BotSupervisor(IBotProcessFactory factory, IBotHealthProbe he
                     await observed.DisposeAsync();
                     if (exit.FailureKind is BotFailureKind.Configuration or BotFailureKind.AddressInUse)
                     {
+                        if (ReferenceEquals(process, observed)) process = null;
+                        startupCompletion?.TrySetResult(false);
                         SetState(LauncherState.AttentionRequired);
                         return;
                     }
                     if (restartCount >= restartDelays.Length)
                     {
+                        if (ReferenceEquals(process, observed)) process = null;
+                        startupCompletion?.TrySetResult(false);
                         SetState(LauncherState.AttentionRequired);
                         return;
                     }
@@ -90,13 +99,14 @@ public sealed class BotSupervisor(IBotProcessFactory factory, IBotHealthProbe he
                 var status = await health.ProbeAsync(options.AdminPort, token);
                 if (status == "ready")
                 {
+                    startupCompletion?.TrySetResult(true);
                     SetState(LauncherState.Running);
                     healthySince ??= clock.UtcNow;
                     if (clock.UtcNow - healthySince >= TimeSpan.FromMinutes(5)) restartCount = 0;
                     unavailableSince = clock.UtcNow;
                 }
-                else if (status == "degraded") SetState(LauncherState.AttentionRequired);
-                else if (clock.UtcNow - unavailableSince >= TimeSpan.FromMinutes(5)) SetState(LauncherState.AttentionRequired);
+                else if (status == "degraded") { startupCompletion?.TrySetResult(false); SetState(LauncherState.AttentionRequired); }
+                else if (clock.UtcNow - unavailableSince >= TimeSpan.FromMinutes(5)) { startupCompletion?.TrySetResult(false); SetState(LauncherState.AttentionRequired); }
                 await delay.DelayAsync(TimeSpan.FromMilliseconds(500), token);
             }
         }

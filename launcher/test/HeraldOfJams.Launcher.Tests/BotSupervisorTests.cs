@@ -10,7 +10,7 @@ public sealed class BotSupervisorTests
     {
         var process = new FakeBotProcess();
         var supervisor = new BotSupervisor(new FakeFactory(process), new FakeHealthProbe("ready"), new BotStartOptions("package", "config.env", 3000));
-        await supervisor.StartAsync();
+        Assert.True(await supervisor.StartAsync());
         await WaitUntilAsync(() => supervisor.CurrentState == LauncherState.Running);
         await supervisor.StopAsync();
         Assert.Equal("shutdown\n", process.StandardInput);
@@ -24,8 +24,9 @@ public sealed class BotSupervisorTests
         var process = new FakeBotProcess();
         var factory = new FakeFactory(process);
         var supervisor = new BotSupervisor(factory, new FakeHealthProbe(null), new BotStartOptions("package", "config.env", 3000));
-        await supervisor.StartAsync();
+        var start = supervisor.StartAsync();
         process.Exit(new BotExit(1, BotFailureKind.AddressInUse));
+        Assert.False(await start);
         await WaitUntilAsync(() => supervisor.CurrentState == LauncherState.AttentionRequired);
         Assert.Equal(1, factory.Starts);
     }
@@ -38,7 +39,7 @@ public sealed class BotSupervisorTests
         var factory = new QueueFactory(processes);
         var delay = new RecordingDelay();
         var supervisor = new BotSupervisor(factory, new FakeHealthProbe(null), new BotStartOptions("package", "config.env", 3000), delay);
-        await supervisor.StartAsync();
+        Assert.False(await supervisor.StartAsync());
         await WaitUntilAsync(() => supervisor.CurrentState == LauncherState.AttentionRequired);
         Assert.Equal(4, factory.Starts);
         Assert.Equal([TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15)], delay.Delays.Where(value => value >= TimeSpan.FromSeconds(1)));
@@ -51,7 +52,7 @@ public sealed class BotSupervisorTests
         var factory = new FakeFactory(process);
         var time = new AdvancingTime();
         var supervisor = new BotSupervisor(factory, new FakeHealthProbe(null), new BotStartOptions("package", "config.env", 3000), time, time);
-        await supervisor.StartAsync();
+        Assert.False(await supervisor.StartAsync());
         await WaitUntilAsync(() => supervisor.CurrentState == LauncherState.AttentionRequired);
         Assert.Equal(1, factory.Starts);
         Assert.False(process.WasForced);

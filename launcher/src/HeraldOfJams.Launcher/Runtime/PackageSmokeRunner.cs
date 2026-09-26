@@ -35,6 +35,8 @@ public sealed class PackageSmokeRunner(string packageDirectory, IPackageNodeRunn
         foreach (var relative in new[] { "runtime/node.exe", "app/main.js", "LICENSE", "VERSION" })
             if (!File.Exists(Path.Combine(packageDirectory, relative))) throw new InvalidDataException("Package is missing a required file.");
         var before = Manifest();
+        if (Directory.Exists(dataDirectory) || File.Exists(dataDirectory))
+            throw new IOException("Smoke data directory must not already exist.");
         Directory.CreateDirectory(dataDirectory);
         try
         {

@@ -54,14 +54,15 @@ public sealed class TrayApplicationContext : ApplicationContext
         catch (Exception) { ApplyState(LauncherState.AttentionRequired); }
     }
 
-    private async Task StartRuntimeAsync()
+    private async Task<bool> StartRuntimeAsync()
     {
         stored = EnvFileReader.Read(paths.ConfigurationFile);
         logs = new RotatingLogWriter(paths.LogDirectory, [stored.Preserved.DiscordToken, stored.Preserved.PasswordHash, stored.Preserved.SessionSecret]);
         supervisor = new BotSupervisor(new BotProcessFactory(logs), new BotHealthProbe(new HttpClient()), new BotStartOptions(packageDirectory, paths.ConfigurationFile, stored.AdminPort));
         supervisor.StateChanged += (_, state) => ui.Post(_ => ApplyState(state), null);
-        await supervisor.StartAsync();
+        var started = await supervisor.StartAsync();
         ApplyState(supervisor.CurrentState);
+        return started;
     }
 
     private async Task<bool> ShowSetupAsync()
@@ -88,11 +89,24 @@ public sealed class TrayApplicationContext : ApplicationContext
 
     private async Task ConfigureAsync()
     {
-        if (!await ShowSetupAsync()) return;
-        if (supervisor is not null) await supervisor.StopAsync();
-        if (supervisor is not null) await supervisor.DisposeAsync();
-        if (logs is not null) await logs.DisposeAsync();
-        await StartRuntimeAsync();
+        if (stored is null) return;
+        using var form = new SetupForm(stored);
+        if (form.ShowDialog() != DialogResult.OK || form.Result is null) return;
+        var input = form.Result;
+        var token = string.IsNullOrEmpty(input.DiscordToken) ? stored.Preserved.DiscordToken : input.DiscordToken;
+        ICredentialGenerator generator;
+        var password = input.AdminPassword;
+        if (string.IsNullOrEmpty(password))
+        {
+            generator = new FixedCredentialGenerator(new GeneratedCredentials(stored.Preserved.PasswordHash, stored.Preserved.SessionSecret));
+            password = "preserved-password";
+        }
+        else generator = new CredentialGenerator(packageDirectory);
+        var normalized = input with { DiscordToken = token, AdminPassword = password };
+        var result = await new ReconfigurationCoordinator(new AtomicConfigurationStore(paths.ConfigurationFile), generator, new TrayLifecycle(this)).ApplyAsync(normalized, CancellationToken.None);
+        stored = EnvFileReader.Read(paths.ConfigurationFile);
+        if (!result.Success)
+            MessageBox.Show(result.Recovered ? "The new configuration failed. The previous configuration was restored." : "Configuration failed and requires attention.", "Herald of Jams", MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     public void OpenAdministration()
@@ -124,6 +138,23 @@ public sealed class TrayApplicationContext : ApplicationContext
         tray.Visible = false;
         tray.Dispose();
         ExitThread();
+    }
+
+    private async Task StopRuntimeAsync()
+    {
+        if (supervisor is not null) { await supervisor.DisposeAsync(); supervisor = null; }
+        if (logs is not null) { await logs.DisposeAsync(); logs = null; }
+    }
+
+    private sealed class TrayLifecycle(TrayApplicationContext owner) : IBotLifecycle
+    {
+        public Task<bool> StartAsync(CancellationToken token = default) => owner.StartRuntimeAsync();
+        public Task StopAsync(CancellationToken token = default) => owner.StopRuntimeAsync();
+    }
+
+    private sealed class FixedCredentialGenerator(GeneratedCredentials credentials) : ICredentialGenerator
+    {
+        public Task<GeneratedCredentials> GenerateAsync(string password, CancellationToken cancellationToken) => Task.FromResult(credentials);
     }
 
     private static void OpenFolder(string path)
