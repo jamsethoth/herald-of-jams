@@ -56,6 +56,7 @@ describe("round administration routes", () => {
       database: context.database,
       clock: context.clock,
       resources: testRuntimeResources,
+      health: () => ({ status: "ready" }),
       adminRepository: context.adminRepository,
       gameService: service,
       executor: new SerialExecutor(),

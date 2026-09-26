@@ -54,6 +54,7 @@ describe("admin server security", () => {
       database: context.database,
       clock: context.clock,
       resources: testRuntimeResources,
+      health: () => ({ status: "ready" }),
     });
 
     const loginPage = await app.inject({ method: "GET", url: "/admin/login" });
@@ -76,12 +77,32 @@ describe("admin server security", () => {
     await app.close();
   });
 
+  it.each(["starting", "reconciling", "ready", "degraded"] as const)(
+    "returns only the safe %s health snapshot",
+    async (status) => {
+      const app = buildAdminServer({
+        config,
+        database: context.database,
+        clock: context.clock,
+        resources: testRuntimeResources,
+        health: () => ({ status }),
+      });
+
+      const response = await app.inject({ method: "GET", url: "/health" });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ status });
+      expect(response.body).not.toMatch(/discord|database|config/i);
+      await app.close();
+    },
+  );
+
   it("regenerates on login, uses hardened scoped cookies, and destroys on logout", async () => {
     const app = buildAdminServer({
       config,
       database: context.database,
       clock: context.clock,
       resources: testRuntimeResources,
+      health: () => ({ status: "ready" }),
     });
     const loginPage = await app.inject({ method: "GET", url: "/admin/login" });
     const anonymousCookie = cookieValue(loginPage.headers["set-cookie"]);
@@ -144,6 +165,7 @@ describe("admin server security", () => {
       database: context.database,
       clock: context.clock,
       resources: testRuntimeResources,
+      health: () => ({ status: "ready" }),
     });
     const loginPage = await app.inject({ method: "GET", url: "/admin/login" });
     const cookie = cookieValue(loginPage.headers["set-cookie"]);
@@ -185,6 +207,7 @@ describe("admin server security", () => {
       database: context.database,
       clock: context.clock,
       resources: testRuntimeResources,
+      health: () => ({ status: "ready" }),
     });
 
     const forged = await app.inject({

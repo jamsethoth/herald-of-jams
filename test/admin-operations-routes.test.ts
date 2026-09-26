@@ -51,6 +51,7 @@ describe("moderation, leaderboard, and operation routes", () => {
       database: context.database,
       clock: context.clock,
       resources: testRuntimeResources,
+      health: () => ({ status: "ready" }),
       adminRepository: context.adminRepository,
       gameService: service,
       executor: new SerialExecutor(),

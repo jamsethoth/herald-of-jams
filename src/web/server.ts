@@ -17,6 +17,7 @@ import type { GameService } from "../application/game-service.js";
 import type { SerialExecutor } from "../application/serial-executor.js";
 import type { AppConfig } from "../config.js";
 import type { RuntimeResources } from "../runtime/resources.js";
+import type { OperationalState } from "../runtime/health.js";
 import type { AdminRepository } from "../db/admin-repository.js";
 import { GameRepository } from "../db/game-repository.js";
 import type { OutboxRepository } from "../db/outbox-repository.js";
@@ -39,6 +40,7 @@ interface AdminServerDependencies {
   database: Database.Database;
   clock: Clock;
   resources: Pick<RuntimeResources, "viewsDirectory" | "publicDirectory">;
+  health: () => { status: OperationalState };
   adminRepository?: AdminRepository;
   gameService?: GameService;
   executor?: SerialExecutor;
@@ -94,6 +96,8 @@ export function buildAdminServer(dependencies: AdminServerDependencies) {
       await reply.redirect("/admin/login");
     }
   };
+
+  app.get("/health", async () => dependencies.health());
 
   void app.register(helmet, { contentSecurityPolicy: true });
   void app.register(formbody);
