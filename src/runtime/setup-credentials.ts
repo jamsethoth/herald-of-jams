@@ -12,7 +12,6 @@ export async function runSetupCredentials(input: Readable, output: Writable): Pr
   if (password.length === 0) throw new Error("Password must not be empty");
 
   const passwordHash = await hashPassword(password);
-  password = "";
   const sessionSecret = randomBytes(32).toString("base64");
   output.write(`${JSON.stringify({ passwordHash, sessionSecret })}\n`);
 }

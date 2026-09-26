@@ -7,7 +7,6 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -24,9 +23,9 @@ const temporaryDirectories: string[] = [];
 function treeDigest(root: string): readonly string[] {
   const entries: string[] = [];
   const visit = (directory: string): void => {
-    for (const name of readdirSync(directory)) {
-      const path = join(directory, name);
-      if (statSync(path).isDirectory()) {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
         visit(path);
       } else {
         const hash = createHash("sha256").update(readFileSync(path)).digest("hex");
