@@ -145,6 +145,20 @@ describe("loadConfig", () => {
     expect(config.runtime).toEqual({ production: true, desktop: true });
   });
 
+  it("round-trips launcher scrypt and Base64 values through the native env parser", () => {
+    const passwordHash = "scrypt$16384$8$1$c2FsdA==$aGFzaA==";
+    const sessionSecret = "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=";
+    const path = configFile({ ADMIN_PASSWORD_HASH: passwordHash, SESSION_SECRET: sessionSecret });
+
+    const config = resolveConfig(
+      { configPath: path, desktop: true, smokeTest: false },
+      {},
+    );
+
+    expect(config.admin.passwordHash).toBe(passwordHash);
+    expect(config.admin.sessionSecret).toBe(sessionSecret);
+  });
+
   it("preserves environment-only configuration", () => {
     expect(resolveConfig({ desktop: false, smokeTest: false }, validEnv())).toEqual(
       loadConfig(validEnv()),
