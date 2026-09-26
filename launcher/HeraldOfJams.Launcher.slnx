@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/HeraldOfJams.Launcher/HeraldOfJams.Launcher.csproj" />
+  <Project Path="test/HeraldOfJams.Launcher.Tests/HeraldOfJams.Launcher.Tests.csproj" />
+</Solution>

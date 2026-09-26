@@ -1,5 +1,4 @@
 import { isIP } from "node:net";
-import { resolve } from "node:path";
 
 import cookie from "@fastify/cookie";
 import csrfProtection from "@fastify/csrf-protection";
@@ -17,6 +16,8 @@ import type { Clock } from "../application/contracts.js";
 import type { GameService } from "../application/game-service.js";
 import type { SerialExecutor } from "../application/serial-executor.js";
 import type { AppConfig } from "../config.js";
+import type { RuntimeResources } from "../runtime/resources.js";
+import type { OperationalState } from "../runtime/health.js";
 import type { AdminRepository } from "../db/admin-repository.js";
 import { GameRepository } from "../db/game-repository.js";
 import type { OutboxRepository } from "../db/outbox-repository.js";
@@ -38,6 +39,8 @@ interface AdminServerDependencies {
   config: AppConfig;
   database: Database.Database;
   clock: Clock;
+  resources: Pick<RuntimeResources, "viewsDirectory" | "publicDirectory">;
+  health: () => { status: OperationalState };
   adminRepository?: AdminRepository;
   gameService?: GameService;
   executor?: SerialExecutor;
@@ -94,6 +97,8 @@ export function buildAdminServer(dependencies: AdminServerDependencies) {
     }
   };
 
+  app.get("/health", async () => dependencies.health());
+
   void app.register(helmet, { contentSecurityPolicy: true });
   void app.register(formbody);
   void app.register(cookie);
@@ -114,19 +119,20 @@ export function buildAdminServer(dependencies: AdminServerDependencies) {
   void app.register(csrfProtection, { sessionPlugin: "@fastify/session" });
   void app.register(rateLimit, { global: false, max: 100, timeWindow: "1 minute" });
   void app.register(fastifyStatic, {
-    root: resolve(process.cwd(), "src", "web", "public"),
+    root: dependencies.resources.publicDirectory,
     prefix: "/admin/static/",
     decorateReply: false,
   });
   void app.register(view, {
     engine: { eta: new Eta() },
-    root: resolve(process.cwd(), "src", "web", "views"),
+    root: dependencies.resources.viewsDirectory,
     layout: "layout.eta",
   });
 
   app.addHook("onRequest", async (request, reply) => {
     if (
       config.runtime.production &&
+      !config.runtime.desktop &&
       request.url.startsWith("/admin") &&
       request.protocol !== "https"
     ) {

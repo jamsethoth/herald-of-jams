@@ -1,5 +1,19 @@
 # Herald of Jams operations
 
+## Portable tray operation
+
+The Windows ZIP is the normal desktop deployment. Extract it and run `Herald of Jams.exe`; first-run setup writes `config.env` under `%LOCALAPPDATA%\Herald of Jams`. The same directory owns `herald-of-jams.sqlite`, its WAL/SHM sidecars, and `logs`. Package replacement never migrates or deletes those files.
+
+Tray states are **Starting**, **Running**, **Attention required**, **Stopping**, and **Stopped**. Commands are **Open administration**, **Configure**, **Open data folder**, **Open logs**, **Restart bot**, and **Exit**. Administration always opens `http://127.0.0.1:<validated-port>/admin` and is enabled only while running.
+
+Logs rotate at 5 MiB and retain at most five files; known configured token/hash/session-secret values are redacted from both child streams. Reconfiguration stages a same-directory candidate, stops cleanly, activates it, and commits only after successful startup. Failed candidate startup restores the byte-identical prior file and attempts to restart it. Exit sends `shutdown`, waits up to 15 seconds for HTTP, Discord, queued work, and SQLite to drain, then forces termination only if necessary.
+
+Unexpected exits retry after 1, 5, and 15 seconds. After three failed restarts the tray requires attention. The budget resets only after five continuous healthy minutes. Five minutes without reachable health also requires attention but does not start a second child or kill the first.
+
+Before distributing a package, run `corepack.cmd pnpm package:win`. To verify an extracted package offline, run `Herald of Jams.exe --smoke-test --data-dir C:\absolute\temporary-folder`; it validates the immutable tree and bundled Node/native SQLite/assets without connecting to Discord.
+
+For replacement, exit cleanly, back up `%LOCALAPPDATA%\Herald of Jams`, extract the new ZIP to a fresh folder, and run it. Never overlay or delete the local-data directory. For a filesystem SQLite backup, keep the database, `-wal`, and `-shm` together; a clean stop is preferred.
+
 ## Initial setup
 
 Install Node.js 24.21.0, enable Corepack, and install the locked dependency graph:
@@ -105,3 +119,5 @@ To test completion with one Discord account, create a template whose start and t
 ## Manual verification status
 
 Manual testing has verified broken-count handling and offline reconciliation in the user's Discord server. The round-start announcement, one-value completion path, announcement overrides, cancellation penalty removal, permissions, Message Content intent, slash registration, pause/resume, bans, ambiguous outbox review, leaderboard publication, and private-network administration still require manual verification before production use. Record only results here—never identifiers, tokens, route secrets, or private URLs.
+
+The portable package has automated offline coverage only. Live Discord connection, permissions, reconciliation, gameplay, and restart acceptance remain pending explicit authorization for the dedicated test server/channel.
